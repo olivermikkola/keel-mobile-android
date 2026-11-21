@@ -474,6 +474,32 @@ class TaskWorkspace(private val db: SqliteDb) : AutoCloseable {
         }
     }
 
+    fun diffAgainstBase(): List<WorkspaceChange> {
+        val overlayRows = db.query("SELECT path, deleted, content, is_binary FROM overlay_files ORDER BY path").rows
+        val basePaths = db.query("SELECT path FROM base_files").rows.mapNotNull { it.firstOrNull()?.toString() }.toSet()
+        val changes = mutableListOf<WorkspaceChange>()
+        for (row in overlayRows) {
+            val path = row[0]?.toString() ?: continue
+            val deleted = (row[1] as? Number)?.toInt() == 1
+            val bytes = row[2] as? ByteArray
+            val isBinary = (row[3] as? Number)?.toInt() == 1
+            when {
+                deleted && path in basePaths -> changes += WorkspaceChange(path, WorkspaceChange.Kind.DELETED, null)
+                !deleted && path in basePaths -> changes += WorkspaceChange(
+                    path,
+                    WorkspaceChange.Kind.MODIFIED,
+                    if (isBinary) null else bytes?.toString(Charsets.UTF_8)
+                )
+                !deleted -> changes += WorkspaceChange(
+                    path,
+                    WorkspaceChange.Kind.CREATED,
+                    if (isBinary) null else bytes?.toString(Charsets.UTF_8)
+                )
+            }
+        }
+        return changes
+    }
+
     override fun close() {
         db.close()
     }

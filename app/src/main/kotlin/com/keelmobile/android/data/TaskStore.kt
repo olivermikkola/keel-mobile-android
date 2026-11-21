@@ -33,6 +33,8 @@ data class SavedTask(
     val repositoryName: String? = null,
     val repositoryBranch: String? = null,
     val repositoryCommitSha: String? = null,
+    val localFolderUri: String? = null,
+    val localFolderName: String? = null,
     val messages: List<SavedMessage> = emptyList(),
     val pendingProposals: List<ProposedEdit> = emptyList(),
     val appliedFilePaths: List<String> = emptyList(),
@@ -54,7 +56,8 @@ data class UserPreferences(
     val memoryEnabled: Boolean = true,
     val memoryFacts: List<MemoryFact> = emptyList(),
     val enabledConnectorIds: Set<String> = emptySet(),
-    val customConnectors: List<McpServerConfig> = emptyList()
+    val customConnectors: List<McpServerConfig> = emptyList(),
+    val useVulkanGpu: Boolean = true
 )
 
 /**

@@ -1,9 +1,11 @@
 package com.keelmobile.android.ui
 
+import android.content.ClipData
+import android.content.ClipboardManager
+import android.content.Context
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -33,13 +35,18 @@ import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.automirrored.filled.VolumeUp
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.AttachFile
+import androidx.compose.material.icons.filled.CameraAlt
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.CloudUpload
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.FolderOpen
+import androidx.compose.material.icons.filled.Image
 import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.Psychology
+import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material3.Button
@@ -71,9 +78,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
-import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
@@ -93,10 +99,15 @@ import com.keelmobile.harness.ProseBlock
 import com.keelmobile.harness.ProposedEdit
 
 private val GENERAL_STARTERS = listOf(
+    "Open a folder on this phone and summarize its files",
     "Attach a CSV and total expenses by category",
-    "Make a clean one-page website for a local bakery",
-    "Quiz me with 5 flashcards on Android architecture"
+    "Make a clean one-page website for a local bakery"
 )
+
+private fun copyToClipboard(context: Context, label: String, text: String) {
+    val cm = context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager ?: return
+    cm.setPrimaryClip(ClipData.newPlainText(label, text))
+}
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -110,6 +121,12 @@ fun ChatScreen(
     onStop: () -> Unit,
     onToggleThinking: () -> Unit,
     onAttachFileClick: () -> Unit,
+    onOpenFolderClick: () -> Unit,
+    onAttachPhotoClick: () -> Unit,
+    onTakePhotoClick: () -> Unit,
+    onRemovePendingPhoto: (Int) -> Unit,
+    onExportChatClick: () -> Unit,
+    onOpenPublishClick: () -> Unit,
     onDictateClick: () -> Unit,
     onSpeakText: (String) -> Unit,
     onApplyProposal: (String) -> Unit,
@@ -183,25 +200,43 @@ fun ChatScreen(
                         }
                     }
 
-                    if (task.appPreset == null && task.repositoryName == null) {
-                        ModeChip(
-                            mode = task.mode,
-                            onToggle = {
-                                onSelectMode(if (task.mode == ChatMode.WORK) ChatMode.CHAT else ChatMode.WORK)
-                            }
-                        )
-                    } else {
-                        Text(
-                            text = task.appPreset?.title ?: task.repositoryName.orEmpty(),
+                    when {
+                        task.localFolderName != null -> Text(
+                            text = "Folder · ${task.localFolderName}",
                             style = MaterialTheme.typography.labelMedium,
                             color = colors.accent,
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis
                         )
+                        task.appPreset != null -> Text(
+                            text = task.appPreset.title,
+                            style = MaterialTheme.typography.labelMedium,
+                            color = colors.accent,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                        task.repositoryName != null -> Text(
+                            text = task.repositoryName.substringAfterLast('/'),
+                            style = MaterialTheme.typography.labelMedium,
+                            color = colors.accent,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                        else -> ModeChip(
+                            mode = task.mode,
+                            onToggle = {
+                                onSelectMode(if (task.mode == ChatMode.WORK) ChatMode.CHAT else ChatMode.WORK)
+                            }
+                        )
                     }
                 }
             },
             actions = {
+                if (task.repositoryName != null && task.appliedFilePaths.isNotEmpty()) {
+                    IconButton(onClick = onOpenPublishClick, modifier = Modifier.testTag("publish_button")) {
+                        Icon(Icons.Default.CloudUpload, contentDescription = "Publish to GitHub", tint = colors.accent)
+                    }
+                }
                 IconButton(onClick = onNewChat, modifier = Modifier.testTag("new_chat_button")) {
                     Icon(Icons.Default.Edit, contentDescription = "New chat", tint = colors.textPrimary)
                 }
@@ -240,8 +275,11 @@ fun ChatScreen(
                 modelName = selectedModel.name,
                 modelInstalled = modelInstalled,
                 onOpenModels = onOpenModels,
+                onOpenFolder = onOpenFolderClick,
                 onStarterClick = { starter ->
-                    if (modelInstalled) onSend(starter) else composerText = starter
+                    if (starter.startsWith("Open a folder")) onOpenFolderClick()
+                    else if (modelInstalled) onSend(starter)
+                    else composerText = starter
                 },
                 modifier = Modifier.weight(1f)
             )
@@ -256,6 +294,18 @@ fun ChatScreen(
                     ChatMessageRow(message = msg, onSpeak = onSpeakText)
                 }
 
+                if (!state.isGenerating && state.lastTelemetry != null && task.messages.lastOrNull()?.role == "assistant") {
+                    item(key = "telemetry_pill") {
+                        val t = state.lastTelemetry
+                        val cachePct = if (t.promptTokens > 0) (t.reusedTokens * 100 / t.promptTokens) else 0
+                        Text(
+                            text = "${"%.1f".format(t.tokensPerSecond)} tok/s · ${t.backend} · $cachePct% prefix cache",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = colors.textMuted
+                        )
+                    }
+                }
+
                 if (state.isGenerating) {
                     item(key = "live_stream") {
                         Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -263,7 +313,7 @@ fun ChatScreen(
                                 StepActivityRail(state.liveSteps.map { it.label })
                             }
                             Text(
-                                text = state.streamingReply.ifBlank { "Working locally…" },
+                                text = state.streamingReply.ifBlank { "Working locally (continues in background)…" },
                                 style = MaterialTheme.typography.bodyLarge,
                                 color = colors.textPrimary
                             )
@@ -274,6 +324,7 @@ fun ChatScreen(
                 items(task.pendingProposals, key = { it.id }) { edit ->
                     ProposalReviewCard(
                         edit = edit,
+                        syncTargetFolder = task.localFolderName,
                         onApply = { onApplyProposal(edit.id) },
                         onDiscard = { onDiscardProposal(edit.id) },
                         onPreview = { onPreviewProposal(edit) }
@@ -299,104 +350,148 @@ fun ChatScreen(
             shape = RoundedCornerShape(topStart = 20.dp, topEnd = 20.dp),
             modifier = Modifier.fillMaxWidth()
         ) {
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 10.dp, vertical = 8.dp),
-                verticalAlignment = Alignment.Bottom,
-                horizontalArrangement = Arrangement.spacedBy(6.dp)
-            ) {
-                Box {
-                    IconButton(onClick = { plusMenuExpanded = true }, modifier = Modifier.testTag("plus_menu_button")) {
-                        Icon(Icons.Default.Add, contentDescription = "More actions", tint = colors.accent)
-                    }
-                    DropdownMenu(
-                        expanded = plusMenuExpanded,
-                        onDismissRequest = { plusMenuExpanded = false }
+            Column {
+                if (state.pendingPhotos.isNotEmpty()) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 12.dp, vertical = 6.dp),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
-                        DropdownMenuItem(
-                            text = { Text("Attach file") },
-                            leadingIcon = { Icon(Icons.Default.AttachFile, contentDescription = null) },
-                            onClick = {
-                                plusMenuExpanded = false
-                                onAttachFileClick()
+                        state.pendingPhotos.forEachIndexed { idx, img ->
+                            Surface(
+                                shape = RoundedCornerShape(12.dp),
+                                color = colors.surfaceRaised,
+                                border = BorderStroke(1.dp, colors.hairline)
+                            ) {
+                                Row(
+                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(4.dp)
+                                ) {
+                                    Icon(Icons.Default.Image, contentDescription = null, tint = colors.accent, modifier = Modifier.size(16.dp))
+                                    Text("Photo ${idx + 1} (${img.width}×${img.height})", style = MaterialTheme.typography.labelSmall, color = colors.textPrimary)
+                                    IconButton(onClick = { onRemovePendingPhoto(idx) }, modifier = Modifier.size(18.dp)) {
+                                        Icon(Icons.Default.Close, contentDescription = "Remove photo", tint = colors.textMuted, modifier = Modifier.size(14.dp))
+                                    }
+                                }
                             }
-                        )
-                        DropdownMenuItem(
-                            text = { Text(if (state.thinkingEnabled) "Thinking: On (capped)" else "Thinking: Off") },
-                            leadingIcon = { Icon(Icons.Default.Psychology, contentDescription = null) },
-                            onClick = {
-                                plusMenuExpanded = false
-                                onToggleThinking()
-                            }
-                        )
+                        }
                     }
                 }
 
-                OutlinedTextField(
-                    value = composerText,
-                    onValueChange = { composerText = it },
-                    placeholder = {
-                        Text(
-                            text = if (state.thinkingEnabled) "Message Keel (Thinking on)…" else "Ask Keel anything…",
-                            color = colors.textMuted
-                        )
-                    },
-                    maxLines = 5,
-                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
-                    keyboardActions = KeyboardActions(
-                        onSend = {
-                            if (composerText.isNotBlank() && !state.isGenerating) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 10.dp, vertical = 8.dp),
+                    verticalAlignment = Alignment.Bottom,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    Box {
+                        IconButton(onClick = { plusMenuExpanded = true }, modifier = Modifier.testTag("plus_menu_button")) {
+                            Icon(Icons.Default.Add, contentDescription = "More actions", tint = colors.accent)
+                        }
+                        DropdownMenu(
+                            expanded = plusMenuExpanded,
+                            onDismissRequest = { plusMenuExpanded = false }
+                        ) {
+                            DropdownMenuItem(
+                                text = { Text("Attach file") },
+                                leadingIcon = { Icon(Icons.Default.AttachFile, contentDescription = null) },
+                                onClick = { plusMenuExpanded = false; onAttachFileClick() }
+                            )
+                            DropdownMenuItem(
+                                text = { Text("Open local folder") },
+                                leadingIcon = { Icon(Icons.Default.FolderOpen, contentDescription = null) },
+                                onClick = { plusMenuExpanded = false; onOpenFolderClick() }
+                            )
+                            DropdownMenuItem(
+                                text = { Text("Attach photo (LFM3 VL)") },
+                                leadingIcon = { Icon(Icons.Default.Image, contentDescription = null) },
+                                onClick = { plusMenuExpanded = false; onAttachPhotoClick() }
+                            )
+                            DropdownMenuItem(
+                                text = { Text("Take photo (LFM3 VL)") },
+                                leadingIcon = { Icon(Icons.Default.CameraAlt, contentDescription = null) },
+                                onClick = { plusMenuExpanded = false; onTakePhotoClick() }
+                            )
+                            DropdownMenuItem(
+                                text = { Text(if (state.thinkingEnabled) "Thinking: On (capped)" else "Thinking: Off") },
+                                leadingIcon = { Icon(Icons.Default.Psychology, contentDescription = null) },
+                                onClick = { plusMenuExpanded = false; onToggleThinking() }
+                            )
+                            if (task.messages.isNotEmpty()) {
+                                DropdownMenuItem(
+                                    text = { Text("Export chat as Markdown") },
+                                    leadingIcon = { Icon(Icons.Default.Share, contentDescription = null) },
+                                    onClick = { plusMenuExpanded = false; onExportChatClick() }
+                                )
+                            }
+                        }
+                    }
+
+                    OutlinedTextField(
+                        value = composerText,
+                        onValueChange = { composerText = it },
+                        placeholder = {
+                            Text(
+                                text = if (state.thinkingEnabled) "Message Keel (Thinking on)…" else "Ask Keel anything…",
+                                color = colors.textMuted
+                            )
+                        },
+                        maxLines = 5,
+                        keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
+                        keyboardActions = KeyboardActions(
+                            onSend = {
+                                if (composerText.isNotBlank() && !state.isGenerating) {
+                                    val toSend = composerText
+                                    composerText = ""
+                                    onSend(toSend)
+                                }
+                            }
+                        ),
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedBorderColor = colors.accent,
+                            unfocusedBorderColor = Color.Transparent,
+                            focusedTextColor = colors.textPrimary,
+                            unfocusedTextColor = colors.textPrimary
+                        ),
+                        modifier = Modifier
+                            .weight(1f)
+                            .testTag("composer_input")
+                    )
+
+                    if (state.isGenerating) {
+                        Button(
+                            onClick = onStop,
+                            colors = ButtonDefaults.buttonColors(containerColor = KeelPalette.Rust),
+                            shape = RoundedCornerShape(14.dp),
+                            contentPadding = PaddingValues(horizontal = 14.dp, vertical = 12.dp),
+                            modifier = Modifier.testTag("stop_button")
+                        ) {
+                            Icon(Icons.Default.Stop, contentDescription = "Stop", tint = Color.White)
+                            Spacer(Modifier.width(4.dp))
+                            Text("Stop", color = Color.White)
+                        }
+                    } else if (composerText.isBlank()) {
+                        IconButton(onClick = onDictateClick, modifier = Modifier.testTag("dictate_button")) {
+                            Icon(Icons.Default.Mic, contentDescription = "Dictate offline", tint = colors.accent)
+                        }
+                    } else {
+                        FilledIconButton(
+                            onClick = {
                                 val toSend = composerText
                                 composerText = ""
                                 onSend(toSend)
-                            }
+                            },
+                            colors = IconButtonDefaults.filledIconButtonColors(
+                                containerColor = colors.accent,
+                                contentColor = colors.background
+                            ),
+                            modifier = Modifier.testTag("send_button")
+                        ) {
+                            Icon(Icons.AutoMirrored.Filled.Send, contentDescription = "Send")
                         }
-                    ),
-                    colors = OutlinedTextFieldDefaults.colors(
-                        focusedBorderColor = colors.accent,
-                        unfocusedBorderColor = Color.Transparent,
-                        focusedTextColor = colors.textPrimary,
-                        unfocusedTextColor = colors.textPrimary
-                    ),
-                    modifier = Modifier
-                        .weight(1f)
-                        .testTag("composer_input")
-                )
-
-                if (state.isGenerating) {
-                    Button(
-                        onClick = onStop,
-                        colors = ButtonDefaults.buttonColors(containerColor = KeelPalette.Rust),
-                        shape = RoundedCornerShape(14.dp),
-                        contentPadding = PaddingValues(horizontal = 14.dp, vertical = 12.dp),
-                        modifier = Modifier.testTag("stop_button")
-                    ) {
-                        Icon(Icons.Default.Stop, contentDescription = "Stop", tint = Color.White)
-                        Spacer(Modifier.width(4.dp))
-                        Text("Stop", color = Color.White)
-                    }
-                } else if (composerText.isBlank()) {
-                    IconButton(onClick = onDictateClick, modifier = Modifier.testTag("dictate_button")) {
-                        Icon(Icons.Default.Mic, contentDescription = "Dictate offline", tint = colors.accent)
-                    }
-                } else {
-                    FilledIconButton(
-                        onClick = {
-                            val toSend = composerText
-                            composerText = ""
-                            onSend(toSend)
-                        },
-                        colors = IconButtonDefaults.filledIconButtonColors(
-                            containerColor = colors.accent,
-                            contentColor = colors.background
-                        ),
-                        modifier = Modifier.testTag("send_button")
-                    ) {
-                        Icon(
-                            Icons.AutoMirrored.Filled.Send,
-                            contentDescription = "Send"
-                        )
                     }
                 }
             }
@@ -428,6 +523,7 @@ private fun EmptyChatWelcome(
     modelName: String,
     modelInstalled: Boolean,
     onOpenModels: () -> Unit,
+    onOpenFolder: () -> Unit,
     onStarterClick: (String) -> Unit,
     modifier: Modifier = Modifier
 ) {
@@ -451,7 +547,7 @@ private fun EmptyChatWelcome(
         )
         Spacer(Modifier.height(6.dp))
         Text(
-            text = preset?.summary ?: "Your local AI agent on this device. No cloud fallback.",
+            text = preset?.summary ?: "Your local AI agent on Android — background replies, real folders, Vulkan GPU.",
             style = MaterialTheme.typography.bodyMedium,
             color = colors.textMuted
         )
@@ -467,7 +563,7 @@ private fun EmptyChatWelcome(
             }
         }
 
-        Spacer(Modifier.height(22.dp))
+        Spacer(Modifier.height(20.dp))
         Column(verticalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
             starters.forEach { starter ->
                 Surface(
@@ -495,7 +591,7 @@ private fun ChatMessageRow(
     onSpeak: (String) -> Unit
 ) {
     val colors = LocalKeelColors.current
-    val clipboard = LocalClipboardManager.current
+    val context = LocalContext.current
 
     when (message.role) {
         "user" -> {
@@ -546,7 +642,7 @@ private fun ChatMessageRow(
                                 is MessageSegment.CodeBlock -> CodeBlockCard(
                                     language = seg.language,
                                     code = seg.code,
-                                    onCopy = { clipboard.setText(AnnotatedString(seg.code)) }
+                                    onCopy = { copyToClipboard(context, "Keel code", seg.code) }
                                 )
                                 is MessageSegment.Prose -> ProseBlocksView(seg.blocks)
                             }
@@ -554,7 +650,7 @@ private fun ChatMessageRow(
                     }
                 }
                 Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                    TextButton(onClick = { clipboard.setText(AnnotatedString(message.text)) }) {
+                    TextButton(onClick = { copyToClipboard(context, "Keel reply", message.text) }) {
                         Icon(Icons.Default.ContentCopy, contentDescription = null, modifier = Modifier.size(16.dp))
                         Spacer(Modifier.width(4.dp))
                         Text("Copy", style = MaterialTheme.typography.labelSmall)
@@ -722,6 +818,7 @@ private fun CodeBlockCard(
 @Composable
 private fun ProposalReviewCard(
     edit: ProposedEdit,
+    syncTargetFolder: String?,
     onApply: () -> Unit,
     onDiscard: () -> Unit,
     onPreview: () -> Unit
@@ -737,13 +834,21 @@ private fun ProposalReviewCard(
     ) {
         Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(
-                    text = "${edit.operation.name.lowercase().replaceFirstChar { it.uppercase() }} · ${edit.path}",
-                    style = MaterialTheme.typography.titleSmall,
-                    fontWeight = FontWeight.SemiBold,
-                    color = colors.accent,
-                    modifier = Modifier.weight(1f)
-                )
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = "${edit.operation.name.lowercase().replaceFirstChar { it.uppercase() }} · ${edit.path}",
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.SemiBold,
+                        color = colors.accent
+                    )
+                    if (syncTargetFolder != null) {
+                        Text(
+                            text = "Will also save directly to folder '$syncTargetFolder'",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = colors.textMuted
+                        )
+                    }
+                }
                 TextButton(onClick = onPreview) {
                     Icon(Icons.Default.Visibility, contentDescription = null, modifier = Modifier.size(16.dp))
                     Spacer(Modifier.width(4.dp))
@@ -783,7 +888,7 @@ private fun ProposalReviewCard(
                 ) {
                     Icon(Icons.Default.Check, contentDescription = null, tint = colors.background, modifier = Modifier.size(16.dp))
                     Spacer(Modifier.width(4.dp))
-                    Text("Apply", color = colors.background)
+                    Text(if (syncTargetFolder != null) "Apply & Save" else "Apply", color = colors.background)
                 }
                 OutlinedButton(
                     onClick = onDiscard,

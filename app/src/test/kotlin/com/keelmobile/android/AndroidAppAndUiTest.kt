@@ -62,7 +62,9 @@ class AndroidAppAndUiTest {
         File(modelsDir, model4b.fileName).writeText("fake-gguf-for-ui-test")
 
         val modelLib = ModelLibraryManager(modelsDir)
-        val taskStore = TaskStore(File(tempDir, "store"))
+        val storeDir = File(tempDir, "store")
+        val taskStore = TaskStore(storeDir)
+        val scheduledStore = com.keelmobile.android.data.ScheduledTaskStore(storeDir)
         val creds = AndroidKeystoreCredentialStore(ctx)
 
         val scripted = ArrayDeque(
@@ -89,7 +91,8 @@ class AndroidAppAndUiTest {
             modelLibrary = modelLib,
             credentials = creds,
             engine = fakeEngine,
-            totalRamBytes = 8L * 1024 * 1024 * 1024
+            totalRamBytes = 8L * 1024 * 1024 * 1024,
+            scheduledStore = scheduledStore
         )
         controller.attachFile("sales.csv", "item,cost\nA,20\nB,25\n")
 
@@ -146,5 +149,29 @@ class AndroidAppAndUiTest {
         // Thermal critical status fails closed with clear user message
         controller.onThermalStatusChanged(ThermalLevel.CRITICAL)
         assertTrue(controller.state.value.bannerMessage?.contains("high temperature", ignoreCase = true) == true)
+
+        // Vulkan GPU preference toggle updates state & persists
+        controller.setUseVulkanGpu(false)
+        assertEquals(false, controller.state.value.preferences.useVulkanGpu)
+        controller.setUseVulkanGpu(true)
+        assertEquals(true, controller.state.value.preferences.useVulkanGpu)
+
+        // Android Share Sheet intake creates a new chat with shared text attached
+        controller.receiveSharedText("https://example.org/spec")
+        val exported = controller.exportActiveChatMarkdown()
+        assertTrue(exported.rawText.contains("example.org/spec", ignoreCase = true) || controller.state.value.bannerMessage?.contains("Shared", ignoreCase = true) == true)
+
+        // Unattended scheduled tasks screen adds, toggles, and deletes schedules
+        controller.navigate(KeelRoute.SCHEDULED)
+        composeRule.waitForIdle()
+        controller.addScheduledTask("Morning digest", "Review open todos", com.keelmobile.harness.ScheduleInterval.DAILY)
+        composeRule.waitForIdle()
+        assertEquals(1, controller.state.value.scheduledTasks.size)
+        val schedId = controller.state.value.scheduledTasks.first().id
+        composeRule.onNodeWithText("Morning digest").assertIsDisplayed()
+        controller.toggleScheduledTask(schedId, false)
+        assertEquals(false, controller.state.value.scheduledTasks.first().enabled)
+        controller.deleteScheduledTask(schedId)
+        assertTrue(controller.state.value.scheduledTasks.isEmpty())
     }
 }

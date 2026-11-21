@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="utf-8"?>
+<shortcuts xmlns:android="http://schemas.android.com/apk/res/android">
+    <shortcut
+        android:shortcutId="new_chat"
+        android:enabled="true"
+        android:icon="@mipmap/ic_launcher"
+        android:shortcutShortLabel="@string/shortcut_new_chat">
+        <intent
+            android:action="com.keelmobile.android.ACTION_NEW_CHAT"
+            android:targetPackage="com.keelmobile.android"
+            android:targetClass="com.keelmobile.android.MainActivity" />
+    </shortcut>
+    <shortcut
+        android:shortcutId="study_app"
+        android:enabled="true"
+        android:icon="@mipmap/ic_launcher"
+        android:shortcutShortLabel="@string/shortcut_study">
+        <intent
+            android:action="com.keelmobile.android.ACTION_OPEN_STUDY"
+            android:targetPackage="com.keelmobile.android"
+            android:targetClass="com.keelmobile.android.MainActivity" />
+    </shortcut>
+    <shortcut
+        android:shortcutId="websites_app"
+        android:enabled="true"
+        android:icon="@mipmap/ic_launcher"
+        android:shortcutShortLabel="@string/shortcut_websites">
+        <intent
+            android:action="com.keelmobile.android.ACTION_OPEN_WEBSITES"
+            android:targetPackage="com.keelmobile.android"
+            android:targetClass="com.keelmobile.android.MainActivity" />
+    </shortcut>
+</shortcuts>

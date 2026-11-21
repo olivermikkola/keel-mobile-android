@@ -497,18 +497,45 @@ enum class MemoryFit {
 
 object DeviceMemoryGate {
     /**
-     * Planning heuristic on Android: assume an app can safely use ~58% of total
-     * physical RAM before LMKD terminates it, or compare against live available memory.
+     * Android RAM-aware fit heuristic: unlike iOS's ~4.5 GB Jetsam cliff, Android
+     * phones with 8–16 GB RAM can safely allocate a larger share (~68% on >= 8 GB,
+     * ~58% on smaller phones) for local model weights + KV cache.
      */
-    fun evaluate(model: LocalModel, totalRamBytes: Long): MemoryFit {
-        val usableBudget = (totalRamBytes.toDouble() * 0.58).toLong()
+    fun evaluate(model: LocalModel, totalRamBytes: Long, availableRamBytes: Long? = null): MemoryFit {
+        val ratio = if (totalRamBytes >= 8L * 1024 * 1024 * 1024) 0.68 else 0.58
+        val usableBudget = (totalRamBytes.toDouble() * ratio).toLong()
         val headroom = if (model.visionFile != null) 640_000_000L else 384_000_000L
         val needed = model.architecture.requiredBytes(model.downloadBytes, model.contextSize, headroom)
+        if (availableRamBytes != null && availableRamBytes > 0L && needed > availableRamBytes && needed > usableBudget) {
+            return MemoryFit.TOO_LARGE
+        }
         return when {
             needed <= (usableBudget * 0.80).toLong() -> MemoryFit.COMFORTABLE
             needed <= usableBudget -> MemoryFit.TIGHT
             else -> MemoryFit.TOO_LARGE
         }
+    }
+}
+
+/**
+ * Resized RGB24 image buffer ready for native mtmd vision encoding (e.g. LFM3 VL 2B).
+ */
+data class VisionImage(
+    val width: Int,
+    val height: Int,
+    val rgbBytes: ByteArray
+) {
+    override fun equals(other: Any?): Boolean {
+        if (this === other) return true
+        if (other !is VisionImage) return false
+        return width == other.width && height == other.height && rgbBytes.contentEquals(other.rgbBytes)
+    }
+
+    override fun hashCode(): Int {
+        var result = width
+        result = 31 * result + height
+        result = 31 * result + rgbBytes.contentHashCode()
+        return result
     }
 }
 

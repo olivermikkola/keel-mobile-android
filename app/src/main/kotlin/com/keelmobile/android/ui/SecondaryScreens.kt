@@ -27,6 +27,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Print
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material3.Button
@@ -58,8 +59,11 @@ import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import com.keelmobile.android.data.LibraryItem
 import com.keelmobile.android.ui.theme.KeelMark
+import com.keelmobile.android.ui.theme.KeelPalette
 import com.keelmobile.android.ui.theme.LocalKeelColors
 import com.keelmobile.harness.CustomInstructions
+import com.keelmobile.harness.ScheduleInterval
+import com.keelmobile.harness.ScheduledTask
 import java.io.ByteArrayInputStream
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -483,6 +487,232 @@ fun OfflinePreviewDialog(
                     }
                 }
             )
+        }
+    }
+}
+
+/**
+ * Unattended scheduled tasks backed by Android WorkManager — runs locally even when
+ * the app is closed, respecting battery and thermal limits.
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun ScheduledTasksScreen(
+    tasks: List<ScheduledTask>,
+    onBack: () -> Unit,
+    onAddTask: (title: String, prompt: String, interval: ScheduleInterval) -> Unit,
+    onToggleTask: (String, Boolean) -> Unit,
+    onRunNow: (String) -> Unit,
+    onDeleteTask: (String) -> Unit
+) {
+    val colors = LocalKeelColors.current
+    var title by remember { mutableStateOf("") }
+    var prompt by remember { mutableStateOf("") }
+    var selectedInterval by remember { mutableStateOf(ScheduleInterval.DAILY) }
+
+    Column(modifier = Modifier.fillMaxSize().background(colors.background)) {
+        TopAppBar(
+            colors = TopAppBarDefaults.topAppBarColors(containerColor = colors.background, titleContentColor = colors.textPrimary),
+            navigationIcon = { IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back", tint = colors.textPrimary) } },
+            title = { Text("Scheduled Tasks") }
+        )
+        LazyColumn(
+            contentPadding = PaddingValues(16.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            item {
+                Surface(
+                    shape = RoundedCornerShape(16.dp),
+                    color = colors.surface,
+                    border = BorderStroke(1.dp, colors.hairline),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                        Text("New background task", style = MaterialTheme.typography.titleMedium, color = colors.textPrimary, fontWeight = FontWeight.SemiBold)
+                        Text(
+                            "Runs unattended on-device via Android WorkManager (skipped if battery is low or the phone is hot).",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = colors.textMuted
+                        )
+                        OutlinedTextField(
+                            value = title,
+                            onValueChange = { title = it },
+                            label = { Text("Title (optional)") },
+                            singleLine = true,
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                        OutlinedTextField(
+                            value = prompt,
+                            onValueChange = { prompt = it },
+                            label = { Text("Prompt to run") },
+                            minLines = 2,
+                            maxLines = 5,
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                            ScheduleInterval.entries.forEach { interval ->
+                                Surface(
+                                    onClick = { selectedInterval = interval },
+                                    shape = RoundedCornerShape(14.dp),
+                                    color = if (selectedInterval == interval) colors.accent else colors.surfaceRaised
+                                ) {
+                                    Text(
+                                        text = interval.label,
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = if (selectedInterval == interval) colors.background else colors.textPrimary,
+                                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)
+                                    )
+                                }
+                            }
+                        }
+                        Button(
+                            onClick = {
+                                onAddTask(title, prompt, selectedInterval)
+                                title = ""
+                                prompt = ""
+                            },
+                            enabled = prompt.isNotBlank(),
+                            colors = ButtonDefaults.buttonColors(containerColor = colors.accent)
+                        ) {
+                            Text("Schedule locally", color = colors.background)
+                        }
+                    }
+                }
+            }
+
+            if (tasks.isEmpty()) {
+                item {
+                    Text(
+                        "No scheduled tasks yet. Create one above to run prompts automatically on-device.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = colors.textMuted
+                    )
+                }
+            } else {
+                items(tasks, key = { it.id }) { item ->
+                    Surface(
+                        shape = RoundedCornerShape(14.dp),
+                        color = colors.surface,
+                        border = BorderStroke(1.dp, colors.hairline),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(item.title, style = MaterialTheme.typography.titleSmall, color = colors.textPrimary, fontWeight = FontWeight.SemiBold)
+                                    Text("${item.interval.label} · ${item.lastStatus}", style = MaterialTheme.typography.labelSmall, color = colors.accent)
+                                }
+                                Switch(checked = item.enabled, onCheckedChange = { onToggleTask(item.id, it) })
+                            }
+                            Text(item.prompt, style = MaterialTheme.typography.bodySmall, color = colors.textMuted)
+                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                OutlinedButton(onClick = { onRunNow(item.id) }) {
+                                    Icon(Icons.Default.PlayArrow, contentDescription = null, modifier = Modifier.size(16.dp))
+                                    Text("Run now")
+                                }
+                                IconButton(onClick = { onDeleteTask(item.id) }) {
+                                    Icon(Icons.Default.Delete, contentDescription = "Delete", tint = colors.textMuted)
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+/**
+ * Explicit GitHub branch/commit/PR publish review dialog.
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun GitHubPublishDialog(
+    sheet: PublishSheetState,
+    onDismiss: () -> Unit,
+    onConfirmPublish: (headBranch: String, commitMessage: String, prTitle: String) -> Unit
+) {
+    val colors = LocalKeelColors.current
+    var branch by remember(sheet.repository) { mutableStateOf("keel/android-update") }
+    var commitMsg by remember(sheet.repository) { mutableStateOf("Update files from Keel Mobile") }
+    var prTitle by remember(sheet.repository) { mutableStateOf("Changes from Keel Mobile") }
+
+    Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
+        Column(modifier = Modifier.fillMaxSize().background(colors.background)) {
+            TopAppBar(
+                colors = TopAppBarDefaults.topAppBarColors(containerColor = colors.background, titleContentColor = colors.textPrimary),
+                navigationIcon = { IconButton(onClick = onDismiss) { Icon(Icons.Default.Close, contentDescription = "Close", tint = colors.textPrimary) } },
+                title = { Text("Publish to GitHub") }
+            )
+            LazyColumn(
+                contentPadding = PaddingValues(16.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                item {
+                    Text(
+                        text = "${sheet.repository} (base: ${sheet.baseBranch} @ ${sheet.baseCommitSha.take(7)})",
+                        style = MaterialTheme.typography.titleSmall,
+                        color = colors.accent
+                    )
+                }
+                item {
+                    Surface(
+                        shape = RoundedCornerShape(12.dp),
+                        color = colors.surface,
+                        border = BorderStroke(1.dp, colors.hairline),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                            Text("Applied changes (${sheet.changes.size})", style = MaterialTheme.typography.labelMedium, color = colors.textMuted)
+                            sheet.changes.forEach { c ->
+                                Text("• ${c.kind.name.lowercase()}: ${c.path}", style = MaterialTheme.typography.bodySmall, color = colors.textPrimary)
+                            }
+                        }
+                    }
+                }
+                item {
+                    OutlinedTextField(value = branch, onValueChange = { branch = it }, label = { Text("New branch name") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                }
+                item {
+                    OutlinedTextField(value = commitMsg, onValueChange = { commitMsg = it }, label = { Text("Commit message") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                }
+                item {
+                    OutlinedTextField(value = prTitle, onValueChange = { prTitle = it }, label = { Text("Pull Request title") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                }
+                sheet.error?.let { err ->
+                    item {
+                        Text(err, style = MaterialTheme.typography.bodySmall, color = KeelPalette.RustBright)
+                    }
+                }
+                sheet.publishedUrl?.let { url ->
+                    item {
+                        Surface(
+                            shape = RoundedCornerShape(12.dp),
+                            color = colors.surfaceRaised,
+                            border = BorderStroke(1.dp, KeelPalette.Jade),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Column(modifier = Modifier.padding(12.dp)) {
+                                Text("Pull Request created:", style = MaterialTheme.typography.labelMedium, color = KeelPalette.JadeBright)
+                                Text(url, style = MaterialTheme.typography.bodySmall, color = colors.textPrimary)
+                            }
+                        }
+                    }
+                }
+                item {
+                    Button(
+                        onClick = { onConfirmPublish(branch, commitMsg, prTitle) },
+                        enabled = !sheet.isPublishing && sheet.publishedUrl == null,
+                        colors = ButtonDefaults.buttonColors(containerColor = colors.accent),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text(
+                            if (sheet.isPublishing) "Publishing branch & PR…" else "Publish branch & open Pull Request",
+                            color = colors.background
+                        )
+                    }
+                }
+            }
         }
     }
 }

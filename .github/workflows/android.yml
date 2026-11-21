@@ -17,6 +17,11 @@ jobs:
           distribution: temurin
           java-version: '21'
 
+      - name: Install Vulkan & SPIR-V headers for Android GPU backend
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libvulkan-dev spirv-headers
+
       - name: Install Android SDK components (API 35, NDK 27, CMake 3.31.6)
         run: |
           yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses > /dev/null 2>&1 || true
@@ -25,6 +30,7 @@ jobs:
             "build-tools;35.0.0" \
             "ndk;27.2.12479018" \
             "cmake;3.31.6"
+          echo "$ANDROID_HOME/cmake/3.31.6/bin" >> "$GITHUB_PATH"
 
       - name: Setup Gradle cache
         uses: gradle/actions/setup-gradle@v4
@@ -38,8 +44,12 @@ jobs:
       - name: Run Android unit & Compose UI tests
         run: ./gradlew :app:testDebugUnitTest --no-daemon
 
-      - name: Build Debug APK (arm64-v8a & x86_64 native llama.cpp JNI)
+      - name: Build Debug APK (arm64-v8a Vulkan GPU + mtmd & x86_64 native llama.cpp JNI)
         run: ./gradlew :app:assembleDebug --no-daemon
+
+      - name: Verify Vulkan linkage in arm64-v8a libkeel_llama.so
+        run: |
+          readelf -d app/build/intermediates/merged_native_libs/debug/mergeDebugNativeLibs/out/lib/arm64-v8a/libkeel_llama.so | grep "libvulkan.so"
 
       - name: Upload Debug APK
         uses: actions/upload-artifact@v4

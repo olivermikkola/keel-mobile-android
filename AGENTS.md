@@ -4,9 +4,11 @@ Plain language. Oliver is not a Linux specialist: give exact commands and say
 what they do.
 
 ## What this is
-A local AI agent for Android. The model runs on the phone through `llama.cpp`
-(native JNI, `arm64-v8a` and `x86_64`) and acts through tools: files, search,
-sandboxed SQL, sandboxed JavaScript, web pages, MCP connectors, and GitHub.
+An Android-native local AI agent. The model runs on the phone through `llama.cpp`
+(native JNI: `arm64-v8a` with Vulkan GPU + `mtmd` vision + embeddings, and `x86_64`
+for emulators) and acts through tools: files, real Android SAF folders, search,
+sandboxed SQL, sandboxed JavaScript, local semantic recall, web pages, MCP
+connectors, unattended `WorkManager` schedules, and GitHub PR publishing.
 A standalone product in the Keel family — not a cloud client, not a remote
 control for a computer, and not an IDE.
 

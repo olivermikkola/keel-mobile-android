@@ -24,7 +24,9 @@ data class LocalGenerationRequest(
     val prompt: String,
     val maxTokens: Int,
     val grammar: ToolCallGrammar? = null,
-    val greedy: Boolean = false
+    val greedy: Boolean = false,
+    val projectorPath: String? = null,
+    val images: List<VisionImage> = emptyList()
 )
 
 /**
@@ -136,6 +138,8 @@ class AgentLoop(
         thinking: Boolean,
         allowedUrls: MutableSet<String>,
         cancellation: InferenceCancellation,
+        projectorPath: String? = null,
+        pendingImages: List<VisionImage> = emptyList(),
         onStreamText: (String) -> Unit = {},
         onStep: (AgentStepEvent) -> Unit = {},
         onProposal: (ProposedEdit) -> Unit = {}
@@ -163,10 +167,17 @@ class AgentLoop(
                 }
                 PromptMessage(role, msg.text)
             }
+            val lastUserIdx = promptMessages.indexOfLast { it.role == "user" }
+            val imageCounts = if (pendingImages.isNotEmpty() && lastUserIdx >= 0) {
+                List(promptMessages.size) { idx -> if (idx == lastUserIdx) pendingImages.size else 0 }
+            } else {
+                emptyList()
+            }
             val renderedPrompt = ModelPrompt.render(
                 family = model.family,
                 system = systemPrompt,
                 messages = promptMessages,
+                imageCounts = imageCounts,
                 thinking = thinking
             )
             val grammar = ToolCallGrammar.makeFromPrompt(renderedPrompt, model.family)
@@ -182,7 +193,9 @@ class AgentLoop(
                     modelPath = modelPath,
                     prompt = renderedPrompt,
                     maxTokens = maxTokens,
-                    grammar = grammar
+                    grammar = grammar,
+                    projectorPath = projectorPath,
+                    images = pendingImages
                 ),
                 cancellation = stepCancel
             ) { token ->

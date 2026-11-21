@@ -13,6 +13,9 @@ import kotlinx.coroutines.launch
 fun KeelAppRoot(
     controller: KeelController,
     onAttachFileClick: () -> Unit,
+    onOpenFolderClick: () -> Unit = {},
+    onAttachPhotoClick: () -> Unit = {},
+    onTakePhotoClick: () -> Unit = {},
     onImportModelClick: () -> Unit,
     onDictateClick: () -> Unit,
     onSpeakText: (String) -> Unit,
@@ -31,6 +34,10 @@ fun KeelAppRoot(
                 onNewChat = { preset ->
                     controller.startNewChat(preset)
                     scope.launch { drawerState.close() }
+                },
+                onOpenLocalFolder = {
+                    scope.launch { drawerState.close() }
+                    onOpenFolderClick()
                 },
                 onSelectTask = { id ->
                     controller.selectTask(id)
@@ -55,6 +62,12 @@ fun KeelAppRoot(
                 onStop = { controller.stopGeneration() },
                 onToggleThinking = { controller.toggleThinking() },
                 onAttachFileClick = onAttachFileClick,
+                onOpenFolderClick = onOpenFolderClick,
+                onAttachPhotoClick = onAttachPhotoClick,
+                onTakePhotoClick = onTakePhotoClick,
+                onRemovePendingPhoto = { controller.removePendingPhoto(it) },
+                onExportChatClick = { onSharePreview(controller.exportActiveChatMarkdown()) },
+                onOpenPublishClick = { controller.openPublishSheet() },
                 onDictateClick = onDictateClick,
                 onSpeakText = onSpeakText,
                 onApplyProposal = { controller.applyProposal(it) },
@@ -71,6 +84,8 @@ fun KeelAppRoot(
                 onPauseDownload = { controller.modelLibrary.pauseDownload() },
                 onDiscardPartial = { controller.modelLibrary.discardPartial(it) },
                 onDeleteModel = { controller.modelLibrary.deleteInstalled(it) },
+                onToggleVulkanGpu = { controller.setUseVulkanGpu(it) },
+                onRunBenchmark = { controller.runSelectedModelBenchmark() },
                 onImportLocalFile = onImportModelClick,
                 onImportHfLink = { controller.importHuggingFaceLink(it) }
             )
@@ -78,6 +93,14 @@ fun KeelAppRoot(
                 items = state.libraryItems,
                 onBack = { controller.navigate(KeelRoute.CHAT) },
                 onOpenItem = { controller.previewLibraryFile(it) }
+            )
+            KeelRoute.SCHEDULED -> ScheduledTasksScreen(
+                tasks = state.scheduledTasks,
+                onBack = { controller.navigate(KeelRoute.CHAT) },
+                onAddTask = { title, prompt, interval -> controller.addScheduledTask(title, prompt, interval) },
+                onToggleTask = { id, enabled -> controller.toggleScheduledTask(id, enabled) },
+                onRunNow = { id -> controller.runScheduledTaskNow(id) },
+                onDeleteTask = { id -> controller.deleteScheduledTask(id) }
             )
             KeelRoute.CUSTOMIZE -> CustomizeScreen(
                 state = state,
@@ -106,6 +129,14 @@ fun KeelAppRoot(
             payload = payload,
             onDismiss = { controller.closePreview() },
             onShare = onSharePreview
+        )
+    }
+
+    state.publishSheet?.let { sheet ->
+        GitHubPublishDialog(
+            sheet = sheet,
+            onDismiss = { controller.closePublishSheet() },
+            onConfirmPublish = { branch, msg, title -> controller.confirmPublishToGitHub(branch, msg, title) }
         )
     }
 }

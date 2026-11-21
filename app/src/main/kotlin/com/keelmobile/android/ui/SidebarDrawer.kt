@@ -19,10 +19,12 @@ import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Description
 import androidx.compose.material.icons.filled.Folder
+import androidx.compose.material.icons.filled.FolderOpen
 import androidx.compose.material.icons.filled.Hub
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Language
 import androidx.compose.material.icons.filled.Memory
+import androidx.compose.material.icons.filled.Schedule
 import androidx.compose.material.icons.filled.School
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Slideshow
@@ -57,6 +59,7 @@ import com.keelmobile.harness.AppPreset
 fun SidebarDrawerContent(
     state: KeelUiState,
     onNewChat: (AppPreset?) -> Unit,
+    onOpenLocalFolder: () -> Unit,
     onSelectTask: (String) -> Unit,
     onDeleteTask: (String) -> Unit,
     onNavigate: (KeelRoute) -> Unit
@@ -106,12 +109,10 @@ fun SidebarDrawerContent(
             verticalArrangement = Arrangement.spacedBy(2.dp)
         ) {
             item {
-                DrawerItem(
-                    label = "New chat",
-                    icon = Icons.Default.Add,
-                    selected = false,
-                    onClick = { onNewChat(null) }
-                )
+                DrawerItem("New chat", Icons.Default.Add, false) { onNewChat(null) }
+            }
+            item {
+                DrawerItem("Open local folder", Icons.Default.FolderOpen, false) { onOpenLocalFolder() }
             }
 
             item { SectionHeader("Apps") }
@@ -128,6 +129,11 @@ fun SidebarDrawerContent(
             item {
                 DrawerItem("Library (${state.libraryItems.size})", Icons.Default.Folder, state.route == KeelRoute.LIBRARY) {
                     onNavigate(KeelRoute.LIBRARY)
+                }
+            }
+            item {
+                DrawerItem("Scheduled (${state.scheduledTasks.size})", Icons.Default.Schedule, state.route == KeelRoute.SCHEDULED) {
+                    onNavigate(KeelRoute.SCHEDULED)
                 }
             }
             item {

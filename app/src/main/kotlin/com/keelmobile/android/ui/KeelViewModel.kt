@@ -1,17 +1,24 @@
 package com.keelmobile.android.ui
 
+import android.net.Uri
 import com.keelmobile.android.data.AndroidKeystoreCredentialStore
 import com.keelmobile.android.data.AndroidSqliteDb
 import com.keelmobile.android.data.AndroidToolHost
 import com.keelmobile.android.data.CredentialStore
+import com.keelmobile.android.data.GitHubPublisher
 import com.keelmobile.android.data.LibraryItem
+import com.keelmobile.android.data.LocalFolderBridge
 import com.keelmobile.android.data.ModelLibraryManager
 import com.keelmobile.android.data.ModelLibraryState
+import com.keelmobile.android.data.PhotoAttachmentHelper
+import com.keelmobile.android.data.RecallStore
 import com.keelmobile.android.data.SavedMessage
 import com.keelmobile.android.data.SavedTask
+import com.keelmobile.android.data.ScheduledTaskStore
 import com.keelmobile.android.data.TaskStore
 import com.keelmobile.android.data.UserPreferences
 import com.keelmobile.android.inference.AndroidLocalInference
+import com.keelmobile.android.inference.BenchmarkSummary
 import com.keelmobile.android.inference.LlamaNative
 import com.keelmobile.harness.AgentLoop
 import com.keelmobile.harness.AgentPrompt
@@ -20,21 +27,25 @@ import com.keelmobile.harness.AppPreset
 import com.keelmobile.harness.ChatMode
 import com.keelmobile.harness.CustomInstructions
 import com.keelmobile.harness.FileView
+import com.keelmobile.harness.GitHubPublishPlanner
 import com.keelmobile.harness.HarnessMessage
 import com.keelmobile.harness.InferenceCancellation
 import com.keelmobile.harness.InferenceTelemetry
 import com.keelmobile.harness.LocalInferenceEngine
-import com.keelmobile.harness.LocalModel
 import com.keelmobile.harness.McpServerConfig
 import com.keelmobile.harness.MemoryFact
 import com.keelmobile.harness.PendingApproval
 import com.keelmobile.harness.ProposedEdit
 import com.keelmobile.harness.ReadUrl
+import com.keelmobile.harness.ScheduleInterval
+import com.keelmobile.harness.ScheduledTask
 import com.keelmobile.harness.SqlSandbox
 import com.keelmobile.harness.TaskWorkspace
 import com.keelmobile.harness.ThermalLevel
 import com.keelmobile.harness.ThermalPolicy
 import com.keelmobile.harness.UserMemory
+import com.keelmobile.harness.VisionImage
+import com.keelmobile.harness.WorkspaceChange
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -52,6 +63,7 @@ enum class KeelRoute {
     CHAT,
     MODELS,
     LIBRARY,
+    SCHEDULED,
     CUSTOMIZE,
     CONNECTIONS,
     ABOUT
@@ -64,6 +76,16 @@ data class PreviewPayload(
     val rawText: String
 )
 
+data class PublishSheetState(
+    val repository: String,
+    val baseBranch: String,
+    val baseCommitSha: String,
+    val changes: List<WorkspaceChange>,
+    val isPublishing: Boolean = false,
+    val publishedUrl: String? = null,
+    val error: String? = null
+)
+
 data class KeelUiState(
     val route: KeelRoute = KeelRoute.CHAT,
     val tasks: List<SavedTask> = emptyList(),
@@ -72,15 +94,23 @@ data class KeelUiState(
     val preferences: UserPreferences = UserPreferences(),
     val connectors: List<McpServerConfig> = emptyList(),
     val libraryItems: List<LibraryItem> = emptyList(),
+    val scheduledTasks: List<ScheduledTask> = emptyList(),
     val isGenerating: Boolean = false,
     val streamingReply: String = "",
     val liveSteps: List<AgentStepEvent> = emptyList(),
     val thinkingEnabled: Boolean = false,
+    val pendingPhotos: List<VisionImage> = emptyList(),
     val pendingApproval: PendingApproval? = null,
     val preview: PreviewPayload? = null,
+    val publishSheet: PublishSheetState? = null,
     val bannerMessage: String? = null,
     val lastTelemetry: InferenceTelemetry? = null,
+    val isBenchmarking: Boolean = false,
+    val lastBenchmark: BenchmarkSummary? = null,
     val deviceTotalRamBytes: Long = 8L * 1024 * 1024 * 1024,
+    val deviceAvailableRamBytes: Long = 4L * 1024 * 1024 * 1024,
+    val freeStorageBytes: Long = 32L * 1024 * 1024 * 1024,
+    val vulkanGpuAvailable: Boolean = false,
     val hasGitHubToken: Boolean = false,
     val hasBraveKey: Boolean = false,
     val systemInfo: String = ""
@@ -95,6 +125,15 @@ class KeelController(
     private val credentials: CredentialStore,
     private val engine: LocalInferenceEngine,
     private val totalRamBytes: Long,
+    private val availableRamBytes: Long = totalRamBytes / 2,
+    private val freeStorageBytes: Long = 32L * 1024 * 1024 * 1024,
+    private val scheduledStore: ScheduledTaskStore? = null,
+    private val onSyncSchedule: ((ScheduledTask) -> Unit)? = null,
+    private val onCancelSchedule: ((String) -> Unit)? = null,
+    private val localFolderBridge: LocalFolderBridge? = null,
+    private val recallStore: RecallStore? = null,
+    private val gitHubPublisher: GitHubPublisher = GitHubPublisher(credentials),
+    private val onInferenceForegroundStatus: ((modelName: String, status: String, running: Boolean) -> Unit)? = null,
     private val scope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
 ) {
     private val _state = MutableStateFlow(KeelUiState())
@@ -109,6 +148,9 @@ class KeelController(
     init {
         val loadedTasks = taskStore.loadTasks().ifEmpty { listOf(SavedTask()) }
         val prefs = taskStore.loadPreferences()
+        if (engine is AndroidLocalInference) {
+            engine.preferVulkanGpu = prefs.useVulkanGpu
+        }
         _state.value = KeelUiState(
             tasks = loadedTasks,
             activeTaskId = loadedTasks.first().id,
@@ -116,7 +158,11 @@ class KeelController(
             preferences = prefs,
             connectors = taskStore.allConnectors(prefs),
             libraryItems = taskStore.buildLibraryIndex(loadedTasks),
+            scheduledTasks = scheduledStore?.load().orEmpty(),
             deviceTotalRamBytes = totalRamBytes,
+            deviceAvailableRamBytes = availableRamBytes,
+            freeStorageBytes = freeStorageBytes,
+            vulkanGpuAvailable = LlamaNative.safeHasGpuBackend(),
             hasGitHubToken = credentials.has(AndroidKeystoreCredentialStore.KEY_GITHUB_TOKEN),
             hasBraveKey = credentials.has(AndroidKeystoreCredentialStore.KEY_BRAVE_SEARCH),
             systemInfo = LlamaNative.safeSystemInfo()
@@ -130,6 +176,9 @@ class KeelController(
     }
 
     fun navigate(route: KeelRoute) {
+        if (route == KeelRoute.SCHEDULED && scheduledStore != null) {
+            _state.update { it.copy(scheduledTasks = scheduledStore.load()) }
+        }
         _state.update { it.copy(route = route, bannerMessage = null) }
     }
 
@@ -141,19 +190,26 @@ class KeelController(
         _state.update { it.copy(thinkingEnabled = !it.thinkingEnabled) }
     }
 
+    fun setUseVulkanGpu(enabled: Boolean) {
+        if (engine is AndroidLocalInference) {
+            engine.preferVulkanGpu = enabled
+        }
+        savePreferences(_state.value.preferences.copy(useVulkanGpu = enabled))
+    }
+
     fun setMode(mode: ChatMode) {
         val task = _state.value.activeTask
-        if (task.appPreset != null || task.repositoryName != null) return
+        if (task.appPreset != null || task.repositoryName != null || task.localFolderUri != null) return
         updateTask(task.copy(mode = mode))
     }
 
     fun startNewChat(preset: AppPreset? = null) {
         stopGeneration()
         val existingEmpty = _state.value.tasks.firstOrNull {
-            it.messages.isEmpty() && it.appPreset == preset && it.repositoryName == null
+            it.messages.isEmpty() && it.appPreset == preset && it.repositoryName == null && it.localFolderUri == null
         }
         if (existingEmpty != null) {
-            _state.update { it.copy(activeTaskId = existingEmpty.id, route = KeelRoute.CHAT) }
+            _state.update { it.copy(activeTaskId = existingEmpty.id, route = KeelRoute.CHAT, pendingPhotos = emptyList()) }
             return
         }
         val fresh = SavedTask(
@@ -163,13 +219,21 @@ class KeelController(
         )
         val updated = (listOf(fresh) + _state.value.tasks).take(TaskStore.MAX_TASKS)
         persistTasks(updated, fresh.id)
-        _state.update { it.copy(route = KeelRoute.CHAT) }
+        _state.update { it.copy(route = KeelRoute.CHAT, pendingPhotos = emptyList()) }
     }
 
     fun selectTask(taskId: String) {
         stopGeneration()
-        if (_state.value.tasks.any { it.id == taskId }) {
-            _state.update { it.copy(activeTaskId = taskId, route = KeelRoute.CHAT) }
+        val latest = taskStore.loadTasks().ifEmpty { _state.value.tasks }
+        if (latest.any { it.id == taskId }) {
+            _state.update {
+                it.copy(
+                    tasks = latest,
+                    activeTaskId = taskId,
+                    route = KeelRoute.CHAT,
+                    pendingPhotos = emptyList()
+                )
+            }
         }
     }
 
@@ -200,6 +264,83 @@ class KeelController(
         updateTask(task.copy(messages = task.messages + notice, appliedFilePaths = nextApplied))
     }
 
+    fun attachPhoto(photo: VisionImage) {
+        val cur = _state.value.pendingPhotos
+        if (cur.size >= PhotoAttachmentHelper.MAX_PHOTOS_PER_TURN) {
+            _state.update { it.copy(bannerMessage = "Up to ${PhotoAttachmentHelper.MAX_PHOTOS_PER_TURN} photos per message.") }
+            return
+        }
+        val selected = _state.value.modelState.selectedModel
+        val hint = if (selected.visionFile == null) {
+            "Photo attached. Switch to LFM3 VL · 2B in Models to send photos to the local vision model."
+        } else null
+        _state.update { it.copy(pendingPhotos = cur + photo, bannerMessage = hint) }
+    }
+
+    fun removePendingPhoto(index: Int) {
+        _state.update { st ->
+            st.copy(pendingPhotos = st.pendingPhotos.filterIndexed { i, _ -> i != index })
+        }
+    }
+
+    /**
+     * Opens a real local Android folder (Storage Access Framework tree URI) into
+     * a Work chat. Approved edits write straight back to the real files on storage!
+     */
+    fun openLocalFolder(treeUri: Uri) {
+        val bridge = localFolderBridge ?: return
+        scope.launch {
+            try {
+                val fresh = SavedTask(
+                    title = "Folder workspace",
+                    mode = ChatMode.WORK,
+                    localFolderUri = treeUri.toString()
+                )
+                val ws = workspaceFor(fresh.id)
+                val summary = bridge.importFolderIntoWorkspace(treeUri, ws)
+                val notice = SavedMessage(
+                    role = "system_notice",
+                    text = "Opened local folder '${summary.folderName}' (${summary.importedFiles} text files loaded, ${summary.skippedFiles} skipped). Approved edits sync directly back to this folder."
+                )
+                val ready = fresh.copy(
+                    title = summary.folderName,
+                    localFolderName = summary.folderName,
+                    messages = listOf(notice)
+                )
+                val updated = (listOf(ready) + _state.value.tasks).take(TaskStore.MAX_TASKS)
+                persistTasks(updated, ready.id)
+                _state.update { it.copy(route = KeelRoute.CHAT, bannerMessage = "Opened folder '${summary.folderName}' (${summary.importedFiles} files).") }
+            } catch (e: Exception) {
+                _state.update { it.copy(bannerMessage = e.message ?: "Could not open folder.") }
+            }
+        }
+    }
+
+    fun receiveSharedText(sharedText: String) {
+        val clean = sharedText.trim()
+        if (clean.isEmpty()) return
+        val task = _state.value.activeTask
+        val notice = SavedMessage(role = "system_notice", text = "Shared into Keel:\n$clean")
+        updateTask(task.copy(messages = task.messages + notice))
+        _state.update { it.copy(route = KeelRoute.CHAT, bannerMessage = "Received shared content. Ask Keel what to do with it.") }
+    }
+
+    fun exportActiveChatMarkdown(): PreviewPayload {
+        val task = _state.value.activeTask
+        val md = buildString {
+            append("# ${task.title}\n\n")
+            for (m in task.messages) {
+                when (m.role) {
+                    "user" -> append("## You\n\n${m.text}\n\n")
+                    "assistant" -> append("## Keel\n\n${m.text}\n\n")
+                    else -> append("> ${m.text}\n\n")
+                }
+            }
+        }
+        val safeName = task.title.replace(Regex("[^A-Za-z0-9._-]"), "_").ifBlank { "chat" } + ".md"
+        return PreviewPayload(safeName, safeName, FileView.renderMarkdown(task.title, md), md)
+    }
+
     fun sendMessage(rawText: String) {
         val text = rawText.trim()
         if (text.isEmpty() || _state.value.isGenerating) return
@@ -213,9 +354,18 @@ class KeelController(
             return
         }
 
+        val photosToSend = _state.value.pendingPhotos
+        if (photosToSend.isNotEmpty() && selected.visionFile == null) {
+            _state.update {
+                it.copy(bannerMessage = "${selected.name} is text-only. Switch to LFM3 VL · 2B in Models or remove the attached photo.")
+            }
+            return
+        }
+
         val task = _state.value.activeTask
-        val title = if (task.messages.isEmpty() && task.appPreset == null) text.take(42) else task.title
-        val userMsg = SavedMessage(role = "user", text = text)
+        val title = if (task.messages.isEmpty() && task.appPreset == null && task.localFolderName == null) text.take(42) else task.title
+        val displayMsg = if (photosToSend.isNotEmpty()) "$text\n[${photosToSend.size} photo(s) attached]" else text
+        val userMsg = SavedMessage(role = "user", text = displayMsg)
         val updatedTask = task.copy(
             title = title,
             messages = task.messages + userMsg,
@@ -230,9 +380,11 @@ class KeelController(
                 isGenerating = true,
                 streamingReply = "",
                 liveSteps = emptyList(),
+                pendingPhotos = emptyList(),
                 bannerMessage = null
             )
         }
+        onInferenceForegroundStatus?.invoke(selected.name, "Working locally…", true)
 
         activeJob = scope.launch {
             try {
@@ -241,14 +393,18 @@ class KeelController(
                 val prefs = _state.value.preferences
                 val enabledConnectors = _state.value.connectors.filter { it.enabled }
 
-                var systemPrompt = if (updatedTask.repositoryName != null) {
-                    AgentPrompt.director(
+                var systemPrompt = when {
+                    updatedTask.repositoryName != null -> AgentPrompt.director(
                         name = updatedTask.repositoryName,
                         branch = updatedTask.repositoryBranch ?: "main",
                         map = ws.repoMap()
                     )
-                } else {
-                    AgentPrompt.local(
+                    updatedTask.localFolderName != null -> AgentPrompt.director(
+                        name = "local folder '${updatedTask.localFolderName}'",
+                        branch = "local",
+                        map = ws.repoMap()
+                    )
+                    else -> AgentPrompt.local(
                         app = updatedTask.appPreset,
                         mode = updatedTask.mode,
                         webSearch = _state.value.hasBraveKey,
@@ -272,7 +428,7 @@ class KeelController(
                     }.toMutableList()
 
                 val allowedUrls = ReadUrl.extractAllowedUrls(
-                    updatedTask.messages.filter { it.role == "user" }.map { it.text }
+                    updatedTask.messages.filter { it.role == "user" || it.role == "system_notice" }.map { it.text }
                 ).toMutableSet()
 
                 val toolHost = AndroidToolHost(
@@ -289,9 +445,14 @@ class KeelController(
                         val ok = askApproval(PendingApproval.RememberFact(UUID.randomUUID().toString(), fact))
                         if (ok) addMemoryFact(fact)
                         ok
+                    },
+                    onRecall = { query ->
+                        recallStore?.searchByMeaning(query, updatedTask.id)
+                            ?: "Search by meaning is not installed."
                     }
                 )
 
+                val projectorPath = selected.visionFile?.let { modelLibrary.assetFile(it).absolutePath }
                 val loop = AgentLoop(engine, ws, sql, toolHost)
                 val result = loop.runTurn(
                     model = selected,
@@ -302,10 +463,13 @@ class KeelController(
                     thinking = _state.value.thinkingEnabled,
                     allowedUrls = allowedUrls,
                     cancellation = cancellation,
+                    projectorPath = projectorPath,
+                    pendingImages = photosToSend,
                     onStreamText = { partial ->
                         _state.update { it.copy(streamingReply = partial) }
                     },
                     onStep = { step ->
+                        onInferenceForegroundStatus?.invoke(selected.name, step.label, true)
                         _state.update { it.copy(liveSteps = it.liveSteps + step) }
                     },
                     onProposal = { edit ->
@@ -350,6 +514,7 @@ class KeelController(
                     )
                 }
             } finally {
+                onInferenceForegroundStatus?.invoke(selected.name, "Done", false)
                 activeCancellation = null
                 activeJob = null
             }
@@ -361,6 +526,7 @@ class KeelController(
         if (engine is AndroidLocalInference) engine.cancelActive()
         approvalDeferred?.complete(false)
         approvalDeferred = null
+        onInferenceForegroundStatus?.invoke("", "", false)
         _state.update { it.copy(pendingApproval = null) }
     }
 
@@ -396,7 +562,24 @@ class KeelController(
                 else -> (task.appliedFilePaths + proposal.path).distinct()
             }
             updateTask(task.copy(pendingProposals = remaining, appliedFilePaths = nextApplied))
-            _state.update { it.copy(bannerMessage = "Applied ${proposal.path}") }
+
+            // If this chat is backed by a real Android folder, write the approved edit straight back to storage!
+            val folderUriStr = task.localFolderUri
+            val bridge = localFolderBridge
+            if (folderUriStr != null && bridge != null) {
+                val finalContent = ws.readText(proposal.destinationPath ?: proposal.path)
+                scope.launch {
+                    val synced = bridge.writeApprovedChangeToFolder(Uri.parse(folderUriStr), proposal, finalContent)
+                    _state.update {
+                        it.copy(
+                            bannerMessage = if (synced) "Applied ${proposal.path} and saved to '${task.localFolderName}'."
+                            else "Applied ${proposal.path} in chat (could not write back to local folder)."
+                        )
+                    }
+                }
+            } else {
+                _state.update { it.copy(bannerMessage = "Applied ${proposal.path}") }
+            }
         } catch (e: Exception) {
             _state.update { it.copy(bannerMessage = e.message ?: "Could not apply proposal.") }
         }
@@ -437,6 +620,123 @@ class KeelController(
     fun closePreview() {
         _state.update { it.copy(preview = null) }
     }
+
+    // --- GitHub Publish Sheet ---
+
+    fun openPublishSheet() {
+        val task = _state.value.activeTask
+        val repo = task.repositoryName ?: return
+        val branch = task.repositoryBranch ?: "main"
+        val sha = task.repositoryCommitSha ?: return
+        val changes = workspaceFor(task.id).diffAgainstBase()
+        if (changes.isEmpty()) {
+            _state.update { it.copy(bannerMessage = "Apply at least one proposed change before publishing to GitHub.") }
+            return
+        }
+        _state.update {
+            it.copy(publishSheet = PublishSheetState(repo, branch, sha, changes))
+        }
+    }
+
+    fun closePublishSheet() {
+        _state.update { it.copy(publishSheet = null) }
+    }
+
+    fun confirmPublishToGitHub(headBranch: String, commitMessage: String, prTitle: String) {
+        val sheet = _state.value.publishSheet ?: return
+        val plan = try {
+            GitHubPublishPlanner.validate(
+                repository = sheet.repository,
+                baseBranch = sheet.baseBranch,
+                baseCommitSha = sheet.baseCommitSha,
+                headBranch = headBranch,
+                commitMessage = commitMessage,
+                prTitle = prTitle,
+                changes = sheet.changes
+            )
+        } catch (e: Exception) {
+            _state.update { it.copy(publishSheet = sheet.copy(error = e.message)) }
+            return
+        }
+
+        _state.update { it.copy(publishSheet = sheet.copy(isPublishing = true, error = null)) }
+        scope.launch {
+            try {
+                val res = gitHubPublisher.publishAndOpenPr(plan)
+                _state.update {
+                    it.copy(
+                        publishSheet = sheet.copy(isPublishing = false, publishedUrl = res.pullRequestUrl),
+                        bannerMessage = "Published branch ${res.branch} and opened Pull Request."
+                    )
+                }
+            } catch (e: Exception) {
+                _state.update {
+                    it.copy(publishSheet = sheet.copy(isPublishing = false, error = e.message ?: "Publish failed."))
+                }
+            }
+        }
+    }
+
+    // --- Unattended Scheduled Tasks (Android WorkManager) ---
+
+    fun addScheduledTask(title: String, prompt: String, interval: ScheduleInterval) {
+        val store = scheduledStore ?: return
+        try {
+            val (cleanTitle, cleanPrompt) = ScheduledTask.validate(title, prompt)
+            val created = ScheduledTask(title = cleanTitle, prompt = cleanPrompt, interval = interval)
+            val next = (listOf(created) + _state.value.scheduledTasks).take(ScheduledTask.MAX_SCHEDULED)
+            store.save(next)
+            onSyncSchedule?.invoke(created)
+            _state.update { it.copy(scheduledTasks = next, bannerMessage = "Scheduled '${created.title}' (${interval.label}).") }
+        } catch (e: Exception) {
+            _state.update { it.copy(bannerMessage = e.message ?: "Could not add scheduled task.") }
+        }
+    }
+
+    fun toggleScheduledTask(id: String, enabled: Boolean) {
+        val store = scheduledStore ?: return
+        val next = _state.value.scheduledTasks.map { if (it.id == id) it.copy(enabled = enabled) else it }
+        store.save(next)
+        next.firstOrNull { it.id == id }?.let { onSyncSchedule?.invoke(it) }
+        _state.update { it.copy(scheduledTasks = next) }
+    }
+
+    fun deleteScheduledTask(id: String) {
+        val store = scheduledStore ?: return
+        onCancelSchedule?.invoke(id)
+        val next = _state.value.scheduledTasks.filterNot { it.id == id }
+        store.save(next)
+        _state.update { it.copy(scheduledTasks = next) }
+    }
+
+    fun runScheduledTaskNow(id: String) {
+        val sched = _state.value.scheduledTasks.firstOrNull { it.id == id } ?: return
+        startNewChat(null)
+        sendMessage(sched.prompt)
+    }
+
+    // --- On-Device Benchmark ---
+
+    fun runSelectedModelBenchmark() {
+        if (_state.value.isBenchmarking || _state.value.isGenerating) return
+        val selected = _state.value.modelState.selectedModel
+        if (selected.id !in _state.value.modelState.installedIds) {
+            _state.update { it.copy(bannerMessage = "Download ${selected.name} first to benchmark it.") }
+            return
+        }
+        val localInf = engine as? AndroidLocalInference ?: return
+        _state.update { it.copy(isBenchmarking = true, lastBenchmark = null) }
+        scope.launch {
+            try {
+                val res = localInf.benchmarkModel(selected, modelLibrary.modelFilePath(selected).absolutePath)
+                _state.update { it.copy(isBenchmarking = false, lastBenchmark = res) }
+            } catch (e: Exception) {
+                _state.update { it.copy(isBenchmarking = false, bannerMessage = e.message ?: "Benchmark failed.") }
+            }
+        }
+    }
+
+    // --- Preferences & Connections ---
 
     fun saveCustomInstructions(text: String) {
         val next = _state.value.preferences.copy(customInstructions = CustomInstructions.normalize(text))

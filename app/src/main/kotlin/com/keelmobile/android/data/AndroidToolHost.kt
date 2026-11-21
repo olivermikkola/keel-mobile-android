@@ -34,6 +34,7 @@ class AndroidToolHost(
     private val onRepositoryOpened: (name: String, branch: String, sha: String) -> Unit,
     private val onAskWebSearchApproval: suspend (query: String) -> Boolean,
     private val onAskMemoryApproval: suspend (fact: String) -> Boolean,
+    private val onRecall: (suspend (query: String) -> String)? = null,
     private val httpClient: OkHttpClient = defaultClient()
 ) : ToolHost {
 
@@ -160,6 +161,9 @@ class AndroidToolHost(
         onRepositoryOpened(cleanRepo, defaultBranch, commitSha)
         "Opened $cleanRepo@$defaultBranch (${commitSha.take(7)}) into this task workspace ($imported files imported)."
     }
+
+    override suspend fun recall(query: String): String =
+        onRecall?.invoke(query) ?: super.recall(query)
 
     override suspend fun callMcpTool(name: String, arguments: Map<String, String>): String =
         withContext(Dispatchers.IO) {

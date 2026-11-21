@@ -11,7 +11,6 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -27,6 +26,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
@@ -56,13 +56,17 @@ fun ModelsScreen(
     onPauseDownload: () -> Unit,
     onDiscardPartial: (LocalModel) -> Unit,
     onDeleteModel: (LocalModel) -> Unit,
+    onToggleVulkanGpu: (Boolean) -> Unit,
+    onRunBenchmark: () -> Unit,
     onImportLocalFile: () -> Unit,
     onImportHfLink: (String) -> Unit
 ) {
     val colors = LocalKeelColors.current
     val ms = state.modelState
     var hfUrl by remember { mutableStateOf("") }
-    val ramGb = state.deviceTotalRamBytes / (1024.0 * 1024.0 * 1024.0)
+    val totalRamGb = state.deviceTotalRamBytes / (1024.0 * 1024.0 * 1024.0)
+    val availRamGb = state.deviceAvailableRamBytes / (1024.0 * 1024.0 * 1024.0)
+    val freeDiskGb = state.freeStorageBytes / (1024.0 * 1024.0 * 1024.0)
 
     Column(
         modifier = Modifier
@@ -79,7 +83,7 @@ fun ModelsScreen(
                     Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back", tint = colors.textPrimary)
                 }
             },
-            title = { Text("Models") }
+            title = { Text("Models & Hardware") }
         )
 
         LazyColumn(
@@ -89,22 +93,48 @@ fun ModelsScreen(
         ) {
             item {
                 Surface(
-                    shape = RoundedCornerShape(14.dp),
+                    shape = RoundedCornerShape(16.dp),
                     color = colors.surfaceRaised,
                     modifier = Modifier.fillMaxWidth()
                 ) {
-                    Column(modifier = Modifier.padding(14.dp)) {
+                    Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         Text(
-                            text = "Device memory: ${"%.1f".format(ramGb)} GB RAM",
+                            text = "RAM: ${"%.1f".format(availRamGb)} GB free / ${"%.1f".format(totalRamGb)} GB total · Storage: ${"%.1f".format(freeDiskGb)} GB free",
                             style = MaterialTheme.typography.titleSmall,
                             color = colors.accent,
                             fontWeight = FontWeight.SemiBold
                         )
-                        Text(
-                            text = "All models run locally on this Android device through llama.cpp. Every pinned download is SHA-256 verified before activation.",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = colors.textMuted
-                        )
+                        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text("Vulkan GPU acceleration", style = MaterialTheme.typography.bodyMedium, color = colors.textPrimary)
+                                Text(
+                                    if (state.vulkanGpuAvailable) "Vulkan GPU detected. Automatically falls back to CPU if a driver refuses."
+                                    else "Falls back to multi-threaded CPU when Vulkan GPU is unavailable.",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = colors.textMuted
+                                )
+                            }
+                            Switch(
+                                checked = state.preferences.useVulkanGpu,
+                                onCheckedChange = onToggleVulkanGpu,
+                                modifier = Modifier.testTag("vulkan_gpu_switch")
+                            )
+                        }
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                            OutlinedButton(
+                                onClick = onRunBenchmark,
+                                enabled = !state.isBenchmarking && ms.selectedModelId in ms.installedIds
+                            ) {
+                                Text(if (state.isBenchmarking) "Benchmarking…" else "Benchmark ${ms.selectedModel.name}")
+                            }
+                        }
+                        state.lastBenchmark?.let { b ->
+                            Text(
+                                text = "${b.modelName} (${b.backend}): prefill ${"%.1f".format(b.prefillTokensPerSec)} tok/s · decode ${"%.1f".format(b.decodeTokensPerSec)} tok/s",
+                                style = MaterialTheme.typography.labelMedium,
+                                color = KeelPalette.JadeBright
+                            )
+                        }
                     }
                 }
             }
@@ -135,7 +165,7 @@ fun ModelsScreen(
                     downloadProgress = ms.downloadProgress,
                     verifying = ms.verifying && ms.activeDownloadId == model.id,
                     partialBytes = ms.partialBytes[model.id] ?: 0L,
-                    fit = DeviceMemoryGate.evaluate(model, state.deviceTotalRamBytes),
+                    fit = DeviceMemoryGate.evaluate(model, state.deviceTotalRamBytes, state.deviceAvailableRamBytes),
                     onSelect = { onSelectModel(model.id) },
                     onDownload = { onDownloadModel(model) },
                     onPause = onPauseDownload,
@@ -158,7 +188,7 @@ fun ModelsScreen(
                     downloadProgress = ms.downloadProgress,
                     verifying = ms.verifying && ms.activeDownloadId == model.id,
                     partialBytes = ms.partialBytes[model.id] ?: 0L,
-                    fit = DeviceMemoryGate.evaluate(model, state.deviceTotalRamBytes),
+                    fit = DeviceMemoryGate.evaluate(model, state.deviceTotalRamBytes, state.deviceAvailableRamBytes),
                     onSelect = {},
                     onDownload = { onDownloadModel(model) },
                     onPause = onPauseDownload,
@@ -178,7 +208,7 @@ fun ModelsScreen(
                     Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                         Text("Import custom GGUF", style = MaterialTheme.typography.titleSmall, color = colors.textPrimary)
                         OutlinedButton(onClick = onImportLocalFile, modifier = Modifier.fillMaxWidth()) {
-                            Text("Import .gguf file from device storage")
+                            Text("Import .gguf file from phone storage / SD card")
                         }
                         OutlinedTextField(
                             value = hfUrl,
