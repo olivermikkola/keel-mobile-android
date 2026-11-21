@@ -1,0 +1,6 @@
+<resources>
+    <style name="Theme.KeelMobile" parent="android:Theme.Material.NoActionBar">
+        <item name="android:statusBarColor">#0A1112</item>
+        <item name="android:navigationBarColor">#0A1112</item>
+    </style>
+</resources>

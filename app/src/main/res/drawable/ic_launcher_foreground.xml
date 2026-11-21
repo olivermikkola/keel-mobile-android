@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:aapt="http://schemas.android.com/aapt"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="512"
+    android:viewportHeight="512">
+    <group
+        android:pivotX="256"
+        android:pivotY="256"
+        android:scaleX="0.62"
+        android:scaleY="0.62">
+        <!-- Rust underside -->
+        <path
+            android:pathData="M86,426 C214,357 316,367 426,391 L426,252 C418,337 231,336 86,426 Z">
+            <aapt:attr name="android:fillColor">
+                <gradient
+                    android:endX="426"
+                    android:endY="340"
+                    android:startX="86"
+                    android:startY="340"
+                    android:type="linear">
+                    <item android:color="#8F4224" android:offset="0.0" />
+                    <item android:color="#F09467" android:offset="1.0" />
+                </gradient>
+            </aapt:attr>
+        </path>
+        <!-- Jade leading sail -->
+        <path
+            android:pathData="M86,426 L426,86 L426,252 C426,328 304,324 203,367 C157,386 118,408 86,426 Z">
+            <aapt:attr name="android:fillColor">
+                <gradient
+                    android:endX="426"
+                    android:endY="426"
+                    android:startX="86"
+                    android:startY="86"
+                    android:type="linear">
+                    <item android:color="#76DFC2" android:offset="0.0" />
+                    <item android:color="#217A65" android:offset="1.0" />
+                </gradient>
+            </aapt:attr>
+        </path>
+    </group>
+</vector>

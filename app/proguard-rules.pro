@@ -1,0 +1,2 @@
+-keep class com.keelmobile.android.inference.LlamaNative { *; }
+-keep interface com.keelmobile.android.inference.LlamaNative$TokenCallback { *; }
