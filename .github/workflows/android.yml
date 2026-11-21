@@ -6,7 +6,7 @@ on:
   pull_request:
 
 jobs:
-  harness-and-app:
+  build-and-test:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -17,25 +17,28 @@ jobs:
           distribution: temurin
           java-version: '21'
 
-      - name: Setup Android SDK
-        uses: android-actions/setup-android@v3
-        with:
-          packages: |
-            platforms;android-35
-            build-tools;35.0.0
-            ndk;27.2.12479018
-            cmake;3.31.6
+      - name: Install Android SDK components (API 35, NDK 27, CMake 3.31.6)
+        run: |
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses > /dev/null 2>&1 || true
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" \
+            "platforms;android-35" \
+            "build-tools;35.0.0" \
+            "ndk;27.2.12479018" \
+            "cmake;3.31.6"
+
+      - name: Setup Gradle cache
+        uses: gradle/actions/setup-gradle@v4
 
       - name: Prepare pinned llama.cpp b12367
         run: bash scripts/prepare-llama.sh
 
-      - name: Run harness tests
+      - name: Run harness unit tests
         run: ./gradlew :harness:test --no-daemon
 
       - name: Run Android unit & Compose UI tests
         run: ./gradlew :app:testDebugUnitTest --no-daemon
 
-      - name: Build Debug APK (with native arm64-v8a & x86_64 JNI)
+      - name: Build Debug APK (arm64-v8a & x86_64 native llama.cpp JNI)
         run: ./gradlew :app:assembleDebug --no-daemon
 
       - name: Upload Debug APK

@@ -2,51 +2,64 @@
 
 ## Prerequisites
 
-- **JDK 21** (e.g., Eclipse Temurin 21)
-- **Android SDK** with:
+- **JDK 21** (e.g. Eclipse Temurin 21)
+- **Android SDK** packages:
   - `platforms;android-35`
   - `build-tools;35.0.0`
   - `platform-tools`
   - `ndk;27.2.12479018`
   - `cmake;3.31.6`
 
-Point Gradle at your Android SDK via `ANDROID_HOME` or `local.properties`:
+Point Gradle at your Android SDK via `ANDROID_HOME` or a local (gitignored) `local.properties`:
 
 ```properties
 sdk.dir=/path/to/android-sdk
 ```
 
-## Preparing `llama.cpp`
+## 1. Prepare pinned `llama.cpp` (`b12367`)
 
-Keel Mobile pins upstream `llama.cpp` `b12367` (supporting Bonsai 2 `Q2_0`, LFM3,
-MiniCPM5, and EmbeddingGemma):
+Keel Mobile pins upstream `llama.cpp` `b12367` (supporting Bonsai 2 `Q2_0`, LFM3, MiniCPM5, and EmbeddingGemma):
 
 ```sh
 bash scripts/prepare-llama.sh
 ```
 
-If `third_party/llama.cpp` is present, Gradle automatically builds
-`libkeel_llama.so` for `arm64-v8a` and `x86_64` via CMake + NDK and bundles it
-inside the APK.
+When `third_party/llama.cpp` is present, Gradle automatically builds `libkeel_llama.so` for `arm64-v8a` and `x86_64` via CMake + Android NDK and bundles both ABIs into the APK.
 
-## Commands
+## 2. Run tests and build the APK
 
 ```sh
-# Fast pure-JVM harness test suite (prompts, grammar, SQLite virtual disk, SQL/JS sandboxes, agent loop)
+# Pure Kotlin harness tests (fast JVM suite)
 ./gradlew :harness:test
 
-# Android unit tests (resumable downloads, SHA-256 verification, GGUF import)
-# and Robolectric Compose UI tests
+# Android unit tests (resumable Range downloads, SHA-256 checks, GGUF import)
+# and Robolectric Jetpack Compose UI tests
 ./gradlew :app:testDebugUnitTest
 
-# Build installable debug APK (output: app/build/outputs/apk/debug/app-debug.apk)
+# Build installable debug APK (app/build/outputs/apk/debug/app-debug.apk)
 ./gradlew :app:assembleDebug
 ```
 
-## Installing on an Android phone
+## 3. Install on an Android phone
 
-Enable **USB debugging** in Android Developer Options, connect your phone, and run:
+Enable **USB debugging** in Android Developer Options, connect the phone over USB, and run:
 
 ```sh
 adb install -r app/build/outputs/apk/debug/app-debug.apk
+```
+
+## 4. Optional: Live local GGUF smoke test on Linux
+
+You can compile the exact same C++ JNI wrapper (`app/src/main/cpp/keel_llama_jni.cpp`) as a host Linux shared library and run `LiveNativeModelSmokeTest` against any local `.gguf` file:
+
+```sh
+cmake -S app/src/main/cpp -B native-build/host-jni \
+  -DKEEL_LLAMA_SRC="$(pwd)/third_party/llama.cpp" \
+  -DCMAKE_BUILD_TYPE=Release
+cmake --build native-build/host-jni --target keel_llama -j
+
+KEEL_JNI_LIB_DIR="$(pwd)/native-build/host-jni" \
+KEEL_LIVE_GGUF="/path/to/LFM3-1.7B-Q4_K_M.gguf" \
+KEEL_LIVE_MODEL_ID=lfm3 \
+./gradlew :app:testDebugUnitTest --tests com.keelmobile.android.LiveNativeModelSmokeTest --rerun-tasks
 ```
