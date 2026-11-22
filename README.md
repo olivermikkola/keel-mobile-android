@@ -5,15 +5,20 @@
 [![Android CI](https://github.com/olivermikkola/keel-mobile-android/actions/workflows/android.yml/badge.svg)](https://github.com/olivermikkola/keel-mobile-android/actions/workflows/android.yml)
 
 **A standalone, Android-native local AI agent.**
-The model runs directly on your phone through `llama.cpp` with **Vulkan GPU acceleration** (`arm64-v8a`, with automatic CPU fallback), native **multimodal vision** (`mtmd`), and **on-device embeddings** — and it takes full advantage of Android's openness instead of inheriting iOS lockdown workarounds.
+The model runs directly on your phone through `llama.cpp` with **Vulkan GPU acceleration** (`arm64-v8a`, with automatic CPU fallback), native **multimodal vision** (`mtmd`), and **on-device embeddings**.
 
 No computer. No model server. No cloud model behind it.
 
 [Harness architecture](docs/HARNESS.md) · [Building & installing](docs/BUILDING.md) · [Keel product vision](https://github.com/olivermikkola/keel/blob/main/docs/VISION.md)
 
-## Built for Android's openness (not an iOS lockdown port)
+**Pre-alpha.** [Build the debug APK from source](#build--install) to try it on
+Android 9 or later. The documented checks cover the JVM, emulator-style UI,
+and a Linux host run of the native runtime. Physical phone performance and
+battery use still need validation.
 
-Keel Mobile for Android keeps the same small-model harness reliability and explicit-approval safety model as the rest of the Keel family, while unlocking capabilities Android uniquely allows:
+## Android capabilities
+
+The Android app combines local inference and explicit approvals with Android system features:
 
 - **Vulkan GPU acceleration (`arm64-v8a`) + live benchmark.** `libkeel_llama.so` bundles `ggml-vulkan` (270+ compiled SPIR-V shaders for Adreno, Mali, and Xclipse GPUs) with automatic CPU fallback, a runtime GPU toggle, and an in-app tok/s speed test.
 - **Background replies that actually finish.** Long tool runs execute inside an Android `InferenceForegroundService` with a live notification and a working **Stop** button — no 30-second background suspension cliff.
