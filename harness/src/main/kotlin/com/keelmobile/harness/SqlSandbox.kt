@@ -262,7 +262,7 @@ class SqlSandbox(
             val row = mutableListOf<String>()
             val cell = StringBuilder()
             var inQuotes = false
-            val normalized = text.replace("\r\n", "\n").replace("\r", "\n")
+            val normalized = text.removePrefix("\uFEFF").replace("\r\n", "\n").replace("\r", "\n")
             var i = 0
             while (i < normalized.length) {
                 val c = normalized[i]

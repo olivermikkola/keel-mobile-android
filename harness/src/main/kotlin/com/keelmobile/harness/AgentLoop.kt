@@ -155,6 +155,7 @@ class AgentLoop(
 
         val reservedTokens = budget.estimate(HarnessMessage(HarnessMessage.Role.USER, systemPrompt)) +
             AgentPrompt.replyTokenLimit(writing = mode == ChatMode.WORK, thinking = thinking)
+        var remainingImages = pendingImages
 
         while (!cancellation.isCancelled) {
             budget.compact(history, reservedTokens = reservedTokens)
@@ -168,8 +169,8 @@ class AgentLoop(
                 PromptMessage(role, msg.text)
             }
             val lastUserIdx = promptMessages.indexOfLast { it.role == "user" }
-            val imageCounts = if (pendingImages.isNotEmpty() && lastUserIdx >= 0) {
-                List(promptMessages.size) { idx -> if (idx == lastUserIdx) pendingImages.size else 0 }
+            val imageCounts = if (remainingImages.isNotEmpty() && lastUserIdx >= 0) {
+                List(promptMessages.size) { idx -> if (idx == lastUserIdx) remainingImages.size else 0 }
             } else {
                 emptyList()
             }
@@ -187,6 +188,9 @@ class AgentLoop(
             val repGuard = RepetitionGuard()
             val rawBuilder = StringBuilder()
 
+            val stepImages = remainingImages
+            remainingImages = emptyList()
+
             lastTelemetry = engine.generate(
                 request = LocalGenerationRequest(
                     model = model,
@@ -195,7 +199,7 @@ class AgentLoop(
                     maxTokens = maxTokens,
                     grammar = grammar,
                     projectorPath = projectorPath,
-                    images = pendingImages
+                    images = stepImages
                 ),
                 cancellation = stepCancel
             ) { token ->

@@ -275,11 +275,23 @@ class MainActivity : ComponentActivity() {
         val name = queryDisplayName(uri) ?: "attached.txt"
         val content = runCatching {
             contentResolver.openInputStream(uri)?.use { stream ->
-                val bytes = stream.readNBytes(512 * 1024)
-                bytes.toString(Charsets.UTF_8)
+                readBoundedBytes(stream, 512 * 1024).toString(Charsets.UTF_8)
             }
         }.getOrNull() ?: return
         controller.attachFile(name, content)
+    }
+
+    private fun readBoundedBytes(stream: java.io.InputStream, maxBytes: Int): ByteArray {
+        val out = java.io.ByteArrayOutputStream()
+        val buf = ByteArray(8192)
+        var remaining = maxBytes
+        while (remaining > 0) {
+            val read = stream.read(buf, 0, minOf(buf.size, remaining))
+            if (read <= 0) break
+            out.write(buf, 0, read)
+            remaining -= read
+        }
+        return out.toByteArray()
     }
 
     private fun handleImportModelUri(uri: Uri) {

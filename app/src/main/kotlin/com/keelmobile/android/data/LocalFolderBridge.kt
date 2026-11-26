@@ -53,7 +53,9 @@ class LocalFolderBridge(private val context: Context) {
                         }
                         val relPath = if (prefix.isEmpty()) name else "$prefix/$name"
                         val bytes = runCatching {
-                            context.contentResolver.openInputStream(child.uri)?.use { it.readNBytes(LocalFolderPolicy.MAX_FILE_BYTES.toInt()) }
+                            context.contentResolver.openInputStream(child.uri)?.use {
+                                readBoundedBytes(it, LocalFolderPolicy.MAX_FILE_BYTES.toInt())
+                            }
                         }.getOrNull()
                         if (bytes != null && !TaskWorkspace.looksBinary(bytes)) {
                             workspace.putBaseFile(relPath, bytes)
@@ -133,5 +135,18 @@ class LocalFolderBridge(private val context: Context) {
         "js" -> "text/javascript"
         "css" -> "text/css"
         else -> "text/plain"
+    }
+
+    private fun readBoundedBytes(stream: java.io.InputStream, maxBytes: Int): ByteArray {
+        val out = java.io.ByteArrayOutputStream()
+        val buf = ByteArray(8192)
+        var remaining = maxBytes
+        while (remaining > 0) {
+            val read = stream.read(buf, 0, minOf(buf.size, remaining))
+            if (read <= 0) break
+            out.write(buf, 0, read)
+            remaining -= read
+        }
+        return out.toByteArray()
     }
 }

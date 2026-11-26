@@ -91,6 +91,28 @@ class HarnessCoreTest {
     }
 
     @Test
+    fun readUrlRejectsPrivateAndLocalRangesAndSqlStripsBom() {
+        val allowed = setOf(
+            "https://example.com/docs",
+            "http://172.16.0.1/secret",
+            "http://0.0.0.0/admin",
+            "http://[::1]/meta",
+            "http://100.64.0.5/tailscale",
+            "http://host.local/info"
+        )
+        assertTrue(ReadUrl.isAllowed("https://example.com/docs", allowed))
+        assertFalse(ReadUrl.isAllowed("http://172.16.0.1/secret", allowed))
+        assertFalse(ReadUrl.isAllowed("http://0.0.0.0/admin", allowed))
+        assertFalse(ReadUrl.isAllowed("http://[::1]/meta", allowed))
+        assertFalse(ReadUrl.isAllowed("http://100.64.0.5/tailscale", allowed))
+        assertFalse(ReadUrl.isAllowed("http://host.local/info", allowed))
+
+        val parsed = SqlSandbox.parseCsv("\uFEFFitem,price\nApple,10\n")
+        assertEquals(listOf("item", "price"), parsed.headers)
+        assertEquals(1, parsed.rows.size)
+    }
+
+    @Test
     fun toolCallRecoveryAndStrictParsing() {
         val messy = """
             Let me think about this...</think>

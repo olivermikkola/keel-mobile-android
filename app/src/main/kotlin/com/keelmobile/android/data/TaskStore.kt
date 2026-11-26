@@ -77,10 +77,14 @@ class TaskStore(private val rootDir: File) {
 
     fun loadTasks(): List<SavedTask> {
         if (!tasksFile.exists()) return emptyList()
-        return runCatching {
+        return try {
             json.decodeFromString<List<SavedTask>>(tasksFile.readText())
                 .sortedByDescending { it.updatedAtMs }
-        }.getOrDefault(emptyList())
+        } catch (_: Exception) {
+            val backup = File(rootDir, "tasks.json.corrupt-${System.currentTimeMillis()}")
+            runCatching { tasksFile.copyTo(backup, overwrite = true) }
+            emptyList()
+        }
     }
 
     fun saveTasks(tasks: List<SavedTask>) {

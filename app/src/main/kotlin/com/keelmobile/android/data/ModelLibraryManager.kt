@@ -20,6 +20,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -137,6 +138,9 @@ class ModelLibraryManager(
         downloadJob = scope.launch {
             try {
                 downloadModelAssets(model)
+                if (model.id.startsWith("hf-")) {
+                    registerDownloadedHfModel(model)
+                }
                 refresh()
                 _state.update { it.copy(activeDownloadId = null, downloadProgress = 0f, verifying = false, error = null) }
                 onDownloadProgressNotification?.invoke(model.name, 100, true)
@@ -156,6 +160,32 @@ class ModelLibraryManager(
                 onDownloadProgressNotification?.invoke(model.name, 0, true)
             }
         }
+    }
+
+    private fun registerDownloadedHfModel(model: LocalModel) {
+        val file = modelFilePath(model)
+        if (!file.exists()) return
+        val header = ByteArray(GgufMetadata.MAX_HEADER_BYTES)
+        val headerRead = FileInputStream(file).use { it.read(header) }.coerceAtLeast(0)
+        val meta = GgufMetadata.parse(header.copyOf(headerRead))
+        val arch = meta?.toArchitecture()
+        val existing = _state.value.imported.filterNot { it.id == model.id || it.fileName == model.fileName }
+        val imported = ImportedModel(
+            id = model.id,
+            name = meta?.name?.take(48) ?: model.name,
+            fileName = model.fileName,
+            bytes = file.length(),
+            sha256 = "",
+            architectureName = meta?.architecture ?: "gguf",
+            family = meta?.inferFamily() ?: model.family,
+            contextSize = (meta?.contextLength ?: model.contextSize).coerceIn(2048, 32768),
+            layerCount = arch?.layerCount ?: model.architecture.layerCount,
+            attentionLayerCount = arch?.fullAttentionLayerCount ?: model.architecture.fullAttentionLayerCount,
+            kvHeadCount = arch?.kvHeadCount ?: model.architecture.kvHeadCount,
+            keyLength = arch?.keyLength ?: model.architecture.keyLength,
+            valueLength = arch?.valueLength ?: model.architecture.valueLength
+        )
+        saveImportedModels(existing + imported)
     }
 
     fun pauseDownload() {
@@ -317,8 +347,11 @@ class ModelLibraryManager(
                     FileOutputStream(partial, append).use { fos ->
                         val buf = ByteArray(64 * 1024)
                         var received = existingOffset
+                        var lastNotifyMs = 0L
+                        var lastNotifyPct = -1
                         val stream = body.byteStream()
                         while (true) {
+                            coroutineContext.ensureActive()
                             val n = stream.read(buf)
                             if (n <= 0) break
                             fos.write(buf, 0, n)
@@ -327,7 +360,13 @@ class ModelLibraryManager(
                                 ((completedPrior + received).toFloat() / overallTotal.toFloat()).coerceIn(0f, 1f)
                             } else 0f
                             _state.update { it.copy(downloadProgress = pct) }
-                            onDownloadProgressNotification?.invoke(model.name, (pct * 100).toInt(), false)
+                            val pctInt = (pct * 100).toInt()
+                            val nowMs = System.currentTimeMillis()
+                            if (pctInt != lastNotifyPct && (nowMs - lastNotifyMs >= 500L || pctInt >= 100)) {
+                                lastNotifyMs = nowMs
+                                lastNotifyPct = pctInt
+                                onDownloadProgressNotification?.invoke(model.name, pctInt, false)
+                            }
                         }
                     }
                 }

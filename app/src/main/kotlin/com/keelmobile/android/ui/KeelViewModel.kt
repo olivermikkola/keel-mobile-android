@@ -419,10 +419,13 @@ class KeelController(
                     systemPrompt = UserMemory.apply(systemPrompt, prefs.memoryFacts, prefs.memoryEnabled)
                 }
 
-                val history = updatedTask.messages.filter { it.role == "user" || it.role == "assistant" }
+                val history = updatedTask.messages.filter {
+                    it.role == "user" || it.role == "assistant" ||
+                        (it.role == "system_notice" && it.text.startsWith("Shared into Keel:"))
+                }
                     .map { m ->
                         HarnessMessage(
-                            if (m.role == "user") HarnessMessage.Role.USER else HarnessMessage.Role.ASSISTANT,
+                            if (m.role == "assistant") HarnessMessage.Role.ASSISTANT else HarnessMessage.Role.USER,
                             m.text
                         )
                     }.toMutableList()
@@ -431,12 +434,14 @@ class KeelController(
                     updatedTask.messages.filter { it.role == "user" || it.role == "system_notice" }.map { it.text }
                 ).toMutableSet()
 
+                val turnTaskId = updatedTask.id
                 val toolHost = AndroidToolHost(
                     credentials = credentials,
                     workspaceProvider = { ws },
                     onRepositoryOpened = { repo, branch, sha ->
-                        val cur = _state.value.activeTask
-                        updateTask(cur.copy(repositoryName = repo, repositoryBranch = branch, repositoryCommitSha = sha))
+                        updateTaskById(turnTaskId) { cur ->
+                            cur.copy(repositoryName = repo, repositoryBranch = branch, repositoryCommitSha = sha)
+                        }
                     },
                     onAskWebSearchApproval = { query ->
                         askApproval(PendingApproval.WebSearchQuery(UUID.randomUUID().toString(), query))
@@ -473,12 +478,12 @@ class KeelController(
                         _state.update { it.copy(liveSteps = it.liveSteps + step) }
                     },
                     onProposal = { edit ->
-                        val cur = _state.value.activeTask
-                        updateTask(cur.copy(pendingProposals = cur.pendingProposals + edit))
+                        updateTaskById(turnTaskId) { cur ->
+                            cur.copy(pendingProposals = cur.pendingProposals + edit)
+                        }
                     }
                 )
 
-                val latestTask = _state.value.activeTask
                 val replyText = result.finalReply.ifBlank {
                     if (result.stoppedByUser) "(Stopped)" else "(Done)"
                 }
@@ -487,12 +492,12 @@ class KeelController(
                     text = replyText,
                     stepLabels = result.steps.map { it.label }
                 )
-                updateTask(
+                updateTaskById(turnTaskId) { latestTask ->
                     latestTask.copy(
                         messages = latestTask.messages + assistantMsg,
                         updatedAtMs = System.currentTimeMillis()
                     )
-                )
+                }
                 _state.update {
                     it.copy(
                         isGenerating = false,
@@ -502,9 +507,10 @@ class KeelController(
                 }
             } catch (e: Exception) {
                 val partial = _state.value.streamingReply.trim()
-                val latestTask = _state.value.activeTask
                 if (partial.isNotEmpty()) {
-                    updateTask(latestTask.copy(messages = latestTask.messages + SavedMessage(role = "assistant", text = partial)))
+                    updateTaskById(updatedTask.id) { latestTask ->
+                        latestTask.copy(messages = latestTask.messages + SavedMessage(role = "assistant", text = partial))
+                    }
                 }
                 _state.update {
                     it.copy(
@@ -839,6 +845,13 @@ class KeelController(
 
     private fun updateTask(updated: SavedTask) {
         val list = _state.value.tasks.map { if (it.id == updated.id) updated else it }
+        persistTasks(list, _state.value.activeTaskId)
+    }
+
+    private fun updateTaskById(taskId: String, transform: (SavedTask) -> SavedTask) {
+        val current = _state.value.tasks.firstOrNull { it.id == taskId } ?: return
+        val updated = transform(current)
+        val list = _state.value.tasks.map { if (it.id == taskId) updated else it }
         persistTasks(list, _state.value.activeTaskId)
     }
 

@@ -20,12 +20,30 @@ object ReadUrl {
     fun isAllowed(url: String, allowedUrls: Set<String>): Boolean {
         val parsed = runCatching { URI(url.trim()) }.getOrNull() ?: return false
         if (parsed.scheme?.lowercase() !in setOf("http", "https")) return false
-        val host = parsed.host?.lowercase() ?: return false
-        // Reject private / loopback literals to prevent SSRF
-        if (host == "localhost" || host.startsWith("127.") || host == "::1" || host.startsWith("10.") ||
-            host.startsWith("192.168.") || host.startsWith("169.254.")
-        ) return false
+        val host = parsed.host?.lowercase()?.trim('[', ']') ?: return false
+        if (isPrivateOrLocalHost(host)) return false
         return url.trim() in allowedUrls
+    }
+
+    private fun isPrivateOrLocalHost(host: String): Boolean {
+        if (host.isEmpty() || host == "localhost" || host == "0.0.0.0" || host == "::1" || host == "::") return true
+        if (host.endsWith(".local") || host.endsWith(".internal") || host.endsWith(".localhost")) return true
+        if (host.startsWith("127.") || host.startsWith("10.") || host.startsWith("192.168.") ||
+            host.startsWith("169.254.") || host.startsWith("0.")
+        ) return true
+        // 172.16.0.0/12
+        if (host.startsWith("172.")) {
+            val second = host.split('.').getOrNull(1)?.toIntOrNull()
+            if (second != null && second in 16..31) return true
+        }
+        // 100.64.0.0/10 (CGNAT / Tailscale)
+        if (host.startsWith("100.")) {
+            val second = host.split('.').getOrNull(1)?.toIntOrNull()
+            if (second != null && second in 64..127) return true
+        }
+        // IPv6 link-local (fe80::/10) and ULA (fc00::/7)
+        if (host.startsWith("fe80:") || host.startsWith("fc") || host.startsWith("fd")) return true
+        return false
     }
 
     fun htmlToBoundedText(html: String, maxChars: Int = MAX_RETURN_CHARS): String {

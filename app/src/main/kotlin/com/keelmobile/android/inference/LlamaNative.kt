@@ -116,6 +116,7 @@ class AndroidLocalInference(
 ) : LocalInferenceEngine {
 
     private val mutex = Mutex()
+    private val handleLock = Any()
     @Volatile
     var preferVulkanGpu: Boolean = true
     @Volatile
@@ -127,16 +128,21 @@ class AndroidLocalInference(
     private var loadedGpuPreference: Boolean = false
 
     fun cancelActive() {
-        val h = handle
-        if (h != 0L && LlamaNative.isAvailable) {
-            LlamaNative.nativeCancel(h)
+        synchronized(handleLock) {
+            val h = handle
+            if (h != 0L && LlamaNative.isAvailable) {
+                LlamaNative.nativeCancel(h)
+            }
         }
     }
 
     suspend fun unload() = mutex.withLock {
         withContext(Dispatchers.IO) {
-            val h = handle
-            handle = 0L
+            val h = synchronized(handleLock) {
+                val cur = handle
+                handle = 0L
+                cur
+            }
             loadedPath = null
             loadedProjectorPath = null
             loadedContextSize = 0
@@ -147,9 +153,17 @@ class AndroidLocalInference(
     }
 
     suspend fun benchmarkModel(model: LocalModel, modelPath: String): BenchmarkSummary {
-        val prompt = "<|im_start|>user\n" +
-            "Count carefully and summarize the key properties of on-device inference on Android phones with Vulkan GPU acceleration. ".repeat(6) +
-            "<|im_end|>\n<|im_start|>assistant\n<think>\n\n</think>\n\n"
+        val prompt = com.keelmobile.harness.ModelPrompt.render(
+            family = model.family,
+            system = "You are a concise assistant.",
+            messages = listOf(
+                com.keelmobile.harness.PromptMessage(
+                    "user",
+                    "Count carefully and summarize the key properties of on-device inference on Android phones with Vulkan GPU acceleration. ".repeat(6)
+                )
+            ),
+            thinking = false
+        )
         val telemetry = generate(
             request = LocalGenerationRequest(
                 model = model,
@@ -200,9 +214,13 @@ class AndroidLocalInference(
                 loadedQuantizedKv != quantizeKv ||
                 loadedGpuPreference != wantGpu
             ) {
-                if (handle != 0L) {
-                    LlamaNative.nativeUnloadModel(handle)
+                val oldHandle = synchronized(handleLock) {
+                    val cur = handle
                     handle = 0L
+                    cur
+                }
+                if (oldHandle != 0L) {
+                    LlamaNative.nativeUnloadModel(oldHandle)
                 }
                 val newHandle = LlamaNative.nativeLoadModel(
                     path = request.modelPath,
@@ -215,7 +233,9 @@ class AndroidLocalInference(
                 if (newHandle == 0L) {
                     throw LocalModelException("The model could not load. Close other apps or choose a smaller model.")
                 }
-                handle = newHandle
+                synchronized(handleLock) {
+                    handle = newHandle
+                }
                 loadedPath = request.modelPath
                 loadedProjectorPath = wantProjector
                 loadedContextSize = ctxSize
