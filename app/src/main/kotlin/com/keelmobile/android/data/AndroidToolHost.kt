@@ -40,12 +40,20 @@ class AndroidToolHost(
 
     private val json = Json { ignoreUnknownKeys = true }
 
+    private val readUrlClient: OkHttpClient = httpClient.newBuilder()
+        .followRedirects(false)
+        .followSslRedirects(false)
+        .build()
+
     override suspend fun readUrl(url: String): String = withContext(Dispatchers.IO) {
         val req = Request.Builder()
             .url(url)
-            .header("User-Agent", "KeelMobile-Android/0.1")
+            .header("User-Agent", "KeelMobile-Android/0.2")
             .build()
-        httpClient.newCall(req).execute().use { resp ->
+        readUrlClient.newCall(req).execute().use { resp ->
+            if (resp.isRedirect) {
+                throw IllegalStateException("Page redirected to another address; open the final URL directly instead.")
+            }
             if (!resp.isSuccessful) {
                 throw IllegalStateException("Could not open page (HTTP ${resp.code}).")
             }
@@ -154,8 +162,22 @@ class AndroidToolHost(
             .build()
         val imported = httpClient.newCall(tarReq).execute().use { resp ->
             if (!resp.isSuccessful) throw IllegalStateException("Could not download archive (HTTP ${resp.code}).")
-            val bytes = resp.body?.bytes() ?: throw IllegalStateException("Empty archive.")
-            workspaceProvider().importGzipTar(bytes)
+            val body = resp.body ?: throw IllegalStateException("Empty archive.")
+            val out = java.io.ByteArrayOutputStream()
+            body.byteStream().use { stream ->
+                val buf = ByteArray(16 * 1024)
+                var total = 0L
+                while (true) {
+                    val n = stream.read(buf)
+                    if (n <= 0) break
+                    total += n
+                    if (total > MAX_TARBALL_BYTES) {
+                        throw IllegalStateException("Repository archive exceeds the 64 MB on-device limit.")
+                    }
+                    out.write(buf, 0, n)
+                }
+            }
+            workspaceProvider().importGzipTar(out.toByteArray())
         }
 
         onRepositoryOpened(cleanRepo, defaultBranch, commitSha)
@@ -174,7 +196,19 @@ class AndroidToolHost(
             val server = com.keelmobile.harness.McpConnector.builtinCatalog.firstOrNull { it.id == serverId }
                 ?: throw IllegalStateException("Unknown MCP connector: $serverId")
             val argJson = JsonObject(arguments.mapValues { JsonPrimitive(it.value) })
-            val payload = """{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"$remoteTool","arguments":$argJson}}"""
+            val payload = JsonObject(
+                mapOf(
+                    "jsonrpc" to JsonPrimitive("2.0"),
+                    "id" to JsonPrimitive(1),
+                    "method" to JsonPrimitive("tools/call"),
+                    "params" to JsonObject(
+                        mapOf(
+                            "name" to JsonPrimitive(remoteTool),
+                            "arguments" to argJson
+                        )
+                    )
+                )
+            ).toString()
             val reqBuilder = Request.Builder()
                 .url(server.endpointUrl)
                 .post(payload.toRequestBody("application/json".toMediaType()))
@@ -190,6 +224,7 @@ class AndroidToolHost(
 
     companion object {
         private const val MAX_HTML_BYTES = 512L * 1024L
+        private const val MAX_TARBALL_BYTES = 64L * 1024L * 1024L
 
         fun defaultClient(): OkHttpClient = OkHttpClient.Builder()
             .connectTimeout(15, TimeUnit.SECONDS)

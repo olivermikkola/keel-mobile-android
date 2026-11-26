@@ -232,11 +232,20 @@ int64_t run_decode_loop(
         batch.n_seq_id[0] = 1;
         batch.seq_id[0][0] = 0;
         batch.logits[0] = 1;
-        if (llama_decode(session->ctx, batch) != 0) break;
+        if (llama_decode(session->ctx, batch) != 0) {
+            llama_memory_clear(llama_get_memory(session->ctx), true);
+            session->cached_tokens.clear();
+            break;
+        }
 
         if (recordTokensToCache) session->cached_tokens.push_back(tok);
         curPos++;
         generated++;
+    }
+
+    if (session->cancelled.load(std::memory_order_acquire)) {
+        llama_memory_clear(llama_get_memory(session->ctx), true);
+        session->cached_tokens.clear();
     }
 
     const auto tDecodeEnd = std::chrono::steady_clock::now();
@@ -460,6 +469,8 @@ Java_com_keelmobile_android_inference_LlamaNative_nativeGenerate(
     for (size_t pos = reused; pos < tokens.size(); ) {
         if (session->cancelled.load(std::memory_order_acquire)) {
             llama_batch_free(batch);
+            llama_memory_clear(llama_get_memory(session->ctx), true);
+            session->cached_tokens.clear();
             return makeResult(actual, static_cast<int64_t>(reused), 0, 0, 0, 1);
         }
         const size_t chunk = std::min(static_cast<size_t>(batchSize), tokens.size() - pos);
@@ -489,6 +500,8 @@ Java_com_keelmobile_android_inference_LlamaNative_nativeGenerate(
     try {
         generated = run_decode_loop(env, session, vocab, sampler, batch, static_cast<int32_t>(tokens.size()), maxTokens, nCtx, true, callback, decodeMs);
     } catch (...) {
+        llama_memory_clear(llama_get_memory(session->ctx), true);
+        session->cached_tokens.clear();
         llama_sampler_free(sampler);
         llama_batch_free(batch);
         return makeResult(actual, static_cast<int64_t>(reused), generated, prefillMs, decodeMs, -4);

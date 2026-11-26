@@ -270,7 +270,8 @@ object ModelCatalog {
         isUtility = true
     )
 
-    val utilities: List<LocalModel> = listOf(search, decide)
+    // Decide is hidden from the utility catalog until the Android Decide screen & runtime ship.
+    val utilities: List<LocalModel> = listOf(search)
 
     val catalog: List<LocalModel> = listOf(
         LocalModel(
