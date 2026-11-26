@@ -79,6 +79,7 @@ class ScheduledTaskStore(private val rootDir: File) {
         if (task.interval == ScheduleInterval.ONE_SHOT) {
             val req = OneTimeWorkRequestBuilder<ScheduledTaskWorker>()
                 .setConstraints(constraints)
+                .setInitialDelay(15, TimeUnit.MINUTES)
                 .setInputData(input)
                 .build()
             wm.enqueueUniqueWork(workName, ExistingWorkPolicy.REPLACE, req)
@@ -126,6 +127,12 @@ class ScheduledTaskWorker(
                 updateStatus(schedStore, scheduleId, "Skipped: device too warm")
                 return Result.retry()
             }
+        }
+
+        val app = applicationContext as? com.keelmobile.android.KeelApplication
+        if (app?.controller?.state?.value?.isGenerating == true) {
+            updateStatus(schedStore, scheduleId, "Deferred: active chat in progress")
+            return Result.retry()
         }
 
         val modelLib = ModelLibraryManager(File(applicationContext.filesDir, "models"))

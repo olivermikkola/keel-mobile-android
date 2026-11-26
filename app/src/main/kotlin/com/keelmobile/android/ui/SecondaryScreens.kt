@@ -633,7 +633,10 @@ fun GitHubPublishDialog(
     onConfirmPublish: (headBranch: String, commitMessage: String, prTitle: String) -> Unit
 ) {
     val colors = LocalKeelColors.current
-    var branch by remember(sheet.repository) { mutableStateOf("keel/android-update") }
+    val uriHandler = androidx.compose.ui.platform.LocalUriHandler.current
+    var branch by remember(sheet.repository) {
+        mutableStateOf("keel/android-${System.currentTimeMillis() % 100_000}")
+    }
     var commitMsg by remember(sheet.repository) { mutableStateOf("Update files from Keel Mobile") }
     var prTitle by remember(sheet.repository) { mutableStateOf("Changes from Keel Mobile") }
 
@@ -692,9 +695,12 @@ fun GitHubPublishDialog(
                             border = BorderStroke(1.dp, KeelPalette.Jade),
                             modifier = Modifier.fillMaxWidth()
                         ) {
-                            Column(modifier = Modifier.padding(12.dp)) {
+                            Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                                 Text("Pull Request created:", style = MaterialTheme.typography.labelMedium, color = KeelPalette.JadeBright)
                                 Text(url, style = MaterialTheme.typography.bodySmall, color = colors.textPrimary)
+                                androidx.compose.material3.TextButton(onClick = { runCatching { uriHandler.openUri(url) } }) {
+                                    Text("Open Pull Request in browser", color = colors.accent)
+                                }
                             }
                         }
                     }

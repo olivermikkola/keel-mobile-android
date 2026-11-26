@@ -1,5 +1,6 @@
 package com.keelmobile.android.ui
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.material3.DrawerValue
 import androidx.compose.material3.ModalNavigationDrawer
 import androidx.compose.material3.rememberDrawerState
@@ -25,6 +26,14 @@ fun KeelAppRoot(
     val drawerState = rememberDrawerState(initialValue = DrawerValue.Closed)
     val scope = rememberCoroutineScope()
 
+    BackHandler(enabled = drawerState.isOpen || state.route != KeelRoute.CHAT) {
+        if (drawerState.isOpen) {
+            scope.launch { drawerState.close() }
+        } else {
+            controller.navigate(KeelRoute.CHAT)
+        }
+    }
+
     ModalNavigationDrawer(
         drawerState = drawerState,
         gesturesEnabled = state.route == KeelRoute.CHAT,
@@ -44,6 +53,7 @@ fun KeelAppRoot(
                     scope.launch { drawerState.close() }
                 },
                 onDeleteTask = { id -> controller.deleteTask(id) },
+                onRenameTask = { id, title -> controller.renameTask(id, title) },
                 onNavigate = { route ->
                     controller.navigate(route)
                     scope.launch { drawerState.close() }
