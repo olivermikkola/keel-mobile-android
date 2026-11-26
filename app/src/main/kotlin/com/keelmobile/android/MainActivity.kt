@@ -167,6 +167,9 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
+        savedInstanceState?.getString(KEY_PENDING_CAMERA_URI)?.let {
+            pendingCameraUri = Uri.parse(it)
+        }
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
             ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
@@ -211,13 +214,22 @@ class MainActivity : ComponentActivity() {
                     },
                     onSpeakText = { text ->
                         if (ttsReady) {
-                            tts?.speak(text.take(3_900), TextToSpeech.QUEUE_FLUSH, null, "keel-reply")
+                            if (tts?.isSpeaking == true) {
+                                tts?.stop()
+                            } else {
+                                tts?.speak(text.take(3_900), TextToSpeech.QUEUE_FLUSH, null, "keel-reply")
+                            }
                         }
                     },
                     onSharePreview = { payload -> sharePreviewFile(payload) }
                 )
             }
         }
+    }
+
+    override fun onSaveInstanceState(outState: Bundle) {
+        super.onSaveInstanceState(outState)
+        pendingCameraUri?.let { outState.putString(KEY_PENDING_CAMERA_URI, it.toString()) }
     }
 
     override fun onNewIntent(intent: Intent) {
@@ -329,5 +341,9 @@ class MainActivity : ComponentActivity() {
             if (c.moveToFirst()) return c.getString(0)
         }
         return uri.lastPathSegment
+    }
+
+    companion object {
+        private const val KEY_PENDING_CAMERA_URI = "keel_pending_camera_uri"
     }
 }

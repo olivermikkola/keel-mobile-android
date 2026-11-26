@@ -18,6 +18,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Description
+import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.FolderOpen
 import androidx.compose.material.icons.filled.Hub
@@ -30,6 +31,7 @@ import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Slideshow
 import androidx.compose.material.icons.filled.TableChart
 import androidx.compose.material.icons.filled.Tune
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -39,6 +41,7 @@ import androidx.compose.material3.NavigationDrawerItem
 import androidx.compose.material3.NavigationDrawerItemDefaults
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -52,6 +55,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.keelmobile.android.ui.theme.KeelMark
+import com.keelmobile.android.ui.theme.KeelPalette
 import com.keelmobile.android.ui.theme.LocalKeelColors
 import com.keelmobile.harness.AppPreset
 
@@ -62,10 +66,59 @@ fun SidebarDrawerContent(
     onOpenLocalFolder: () -> Unit,
     onSelectTask: (String) -> Unit,
     onDeleteTask: (String) -> Unit,
+    onRenameTask: (String, String) -> Unit = { _, _ -> },
     onNavigate: (KeelRoute) -> Unit
 ) {
     val colors = LocalKeelColors.current
     var search by remember { mutableStateOf("") }
+    var pendingDeleteId by remember { mutableStateOf<String?>(null) }
+    var renamingTaskId by remember { mutableStateOf<String?>(null) }
+    var renameDraft by remember { mutableStateOf("") }
+
+    pendingDeleteId?.let { targetId ->
+        val title = state.tasks.firstOrNull { it.id == targetId }?.title ?: "this chat"
+        AlertDialog(
+            onDismissRequest = { pendingDeleteId = null },
+            title = { Text("Delete chat?") },
+            text = { Text("Delete \"$title\" and its workspace files from this device?") },
+            confirmButton = {
+                TextButton(onClick = {
+                    pendingDeleteId = null
+                    onDeleteTask(targetId)
+                }) { Text("Delete", color = KeelPalette.RustBright) }
+            },
+            dismissButton = {
+                TextButton(onClick = { pendingDeleteId = null }) { Text("Cancel") }
+            }
+        )
+    }
+
+    renamingTaskId?.let { targetId ->
+        AlertDialog(
+            onDismissRequest = { renamingTaskId = null },
+            title = { Text("Rename chat") },
+            text = {
+                OutlinedTextField(
+                    value = renameDraft,
+                    onValueChange = { renameDraft = it },
+                    singleLine = true,
+                    label = { Text("Title") }
+                )
+            },
+            confirmButton = {
+                TextButton(
+                    enabled = renameDraft.trim().isNotEmpty(),
+                    onClick = {
+                        onRenameTask(targetId, renameDraft.trim())
+                        renamingTaskId = null
+                    }
+                ) { Text("Save") }
+            },
+            dismissButton = {
+                TextButton(onClick = { renamingTaskId = null }) { Text("Cancel") }
+            }
+        )
+    }
     val filteredTasks = remember(state.tasks, search) {
         if (search.isBlank()) state.tasks
         else state.tasks.filter { t ->
@@ -185,8 +238,14 @@ fun SidebarDrawerContent(
                         ),
                         modifier = Modifier.weight(1f)
                     )
+                    IconButton(onClick = {
+                        renameDraft = task.title
+                        renamingTaskId = task.id
+                    }) {
+                        Icon(Icons.Default.Edit, contentDescription = "Rename chat", tint = colors.textMuted, modifier = Modifier.size(18.dp))
+                    }
                     if (state.tasks.size > 1) {
-                        IconButton(onClick = { onDeleteTask(task.id) }) {
+                        IconButton(onClick = { pendingDeleteId = task.id }) {
                             Icon(Icons.Default.Delete, contentDescription = "Delete chat", tint = colors.textMuted, modifier = Modifier.size(18.dp))
                         }
                     }

@@ -9,7 +9,7 @@ The model runs directly on your phone through `llama.cpp` with **Vulkan GPU acce
 
 No computer. No model server. No cloud model behind it.
 
-[Harness architecture](docs/HARNESS.md) · [Building & installing](docs/BUILDING.md) · [Keel product vision](https://github.com/olivermikkola/keel/blob/main/docs/VISION.md)
+[Harness architecture](docs/HARNESS.md) · [Building & installing](docs/BUILDING.md) · [Keel product vision](https://github.com/olivermikkola/keel-code/blob/main/docs/VISION.md)
 
 **Pre-alpha.** [Build the debug APK from source](#build--install) to try it on
 Android 9 or later. The documented checks cover the JVM, emulator-style UI,
@@ -26,7 +26,7 @@ The Android app combines local inference and explicit approvals with Android sys
 - **Real local folders on your phone.** Pick any folder via Android Storage Access Framework (`ACTION_OPEN_DOCUMENT_TREE` with persisted permission): Keel imports text/code/CSV/Markdown files into the task workspace and writes **explicitly approved** edits directly back to your phone's storage.
 - **Photos & camera with native vision (`mtmd`).** Attach photos from Android Photo Picker or capture with the camera for `LFM3 VL · 2B`, encoded natively through `libmtmd.a`.
 - **On-device semantic recall (`EmbeddingGemma 300M`).** Native `llama.cpp` embeddings (`nativeEmbed`) index your chats and applied files locally so the `recall` tool finds earlier work by meaning without leaving the phone.
-- **Deep Android system integration.** Share text, links, images, or files directly into Keel from any app via the Android **Share Sheet** (`ACTION_SEND`); long-press the launcher icon for **App Shortcuts** (New Chat, Open Local Folder, Voice Prompt, Scheduled Tasks); export any conversation as Markdown; and publish approved GitHub workspace edits as a branch + Pull Request after explicit review.
+- **Deep Android system integration.** Share text, links, images, or files directly into Keel from any app via the Android **Share Sheet** (`ACTION_SEND`); long-press the launcher icon for **App Shortcuts** (New Chat, Study Deck, Websites); export any conversation as Markdown; and publish approved GitHub workspace edits as a branch + Pull Request after explicit review.
 
 ## How it works
 
@@ -114,7 +114,7 @@ One engine, focused surfaces:
 
 | Product | What it is |
 | --- | --- |
-| [Keel](https://github.com/olivermikkola/keel) | CLI + TUI coding agent for small local models |
+| [Keel Code](https://github.com/olivermikkola/keel-code) | CLI + TUI coding agent for small local models |
 | [Keel Desktop](https://github.com/olivermikkola/keel-desktop) | Everyday local-AI app for macOS, Linux, and Windows |
 | **Keel Mobile (Android)** (this repo) | Standalone Android-native on-device agent via `llama.cpp` JNI + Vulkan |
 | [Keel Console](https://github.com/olivermikkola/keel-xbox) | Living-room app for Xbox / TV |
